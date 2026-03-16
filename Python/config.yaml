@@ -1,0 +1,118 @@
+# RL Training Configuration
+env:
+  host: "127.0.0.1"
+  port: 5555
+  step_delay: 0.066
+  max_steps: 2000
+  observation_size: 17  # 9 base + 8 player profile
+  player_id: "default"
+
+training:
+  algorithm: "PPO"
+  total_timesteps: 500000
+  learning_rate: 0.0003
+  batch_size: 64
+  n_steps: 2048
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.01
+  n_epochs: 10
+
+logging:
+  tensorboard_dir: "./tb_logs"
+  checkpoint_dir: "./checkpoints"
+  checkpoint_freq: 10000
+  log_interval: 10
+
+inference:
+  model_path: "./checkpoints/final_model.zip"
+  deterministic: true
+
+# --- Upgrade 2: Cross-Encounter Memory ---
+memory:
+  decay_encounter_threshold: 5
+  decay_rate: 0.15
+  active_threshold: 0.15
+  max_recent_encounters: 20
+
+# --- Upgrade 3: Hierarchical RL ---
+hierarchical:
+  strategy_interval: 30          # steps between strategy re-evaluation
+  strategies:
+    - "aggressive_rush"
+    - "defensive_attrition"
+    - "hit_and_run"
+    - "counter_focused"
+  strategist_lr: 0.0001
+  tactician_lr: 0.0003
+  pretrain_tactician_steps: 200000
+  train_strategist_steps: 100000
+  joint_finetune_steps: 200000
+  strategy_reward_weight: 0.5
+  model_dir: "./checkpoints/hierarchical"
+
+# --- Upgrade 4: Constrained Learning for Fun ---
+constraints:
+  enabled: false                 # set to true to activate
+  target_win_rate: 0.45          # boss should win roughly 45% of fights
+  win_rate_window: 100           # rolling window for win rate calculation
+  max_epsilon: 0.3               # max incompetence probability
+  lead_change_bonus: 0.5         # reward for HP lead swings
+  close_fight_bonus: 0.1         # reward when both HPs are close
+  close_fight_threshold: 0.2     # HP difference threshold for "close fight"
+
+# --- Upgrade 6: Transfer Learning ---
+transfer:
+  enabled: false                 # set to true to activate
+  base_model_dir: "./models/base"
+  player_model_dir: "./models/players"
+  replay_dir: "./replays"
+  fine_tune_lr: 0.0001
+  fine_tune_steps_per_episode: 50000
+  min_episodes_for_base: 5
+  record_replays: false          # set to true to record replay data
+
+# --- Extension 8: Inverse RL Player Modeling ---
+irl:
+  enabled: false                 # set to true to activate
+  feature_dim: 20                # IRL feature vector dimension
+  learning_rate: 0.01
+  n_iterations: 200
+  model_dir: "./models/irl"
+  min_episodes_for_irl: 2        # minimum episodes before IRL is meaningful
+  update_interval: 1             # re-train IRL every N encounters
+
+# --- Extension 9: World Model / Planning ---
+world_model:
+  enabled: false                 # set to true to activate
+  hidden_size: 128               # dynamics model hidden layer size
+  learning_rate: 0.001
+  train_epochs: 50
+  batch_size: 256
+  model_dir: "./models/world_model"
+  lookahead_depth: 2             # 1 or 2 step planning
+  num_simulations: 5             # action evaluations per step
+  planning_weight: 0.5           # blend: 0=policy only, 1=planner only
+  record_player_actions: false   # record hero actions for training
+
+# --- Extension 10: Emotion-Aware AI ---
+emotion:
+  enabled: false                 # set to true to activate
+  frustration_epsilon_boost: 0.15  # added to incompetence when frustrated
+  frustration_reward_scale: 0.5    # scale down boss reward when player frustrated
+  boredom_aggression_bonus: 0.3    # reward bonus for aggressive play when bored
+  flow_maintenance_bonus: 0.2     # reward bonus for maintaining flow state
+
+# --- Extension 7: MAML Meta-Learning ---
+maml:
+  enabled: false                 # set to true to activate
+  meta_lr: 0.001                 # outer loop learning rate
+  inner_lr: 0.01                 # inner loop learning rate
+  inner_steps: 3                 # gradient steps for adaptation
+  tasks_per_batch: 4             # players sampled per meta-batch
+  meta_iterations: 5000          # outer loop iterations
+  support_fraction: 0.5          # fraction of episodes for support set
+  min_episodes_per_player: 3
+  meta_model_dir: "./models/maml"
+  policy_hidden_size: 64

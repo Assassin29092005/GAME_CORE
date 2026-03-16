@@ -1,0 +1,37 @@
+# UE5 generated
+Binaries/
+Intermediate/
+Saved/
+DerivedDataCache/
+Build/
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.sln.user
+
+# Python
+Python/venv/
+Python/__pycache__/
+**/__pycache__/
+*.pyc
+
+# Node
+Docs/node_modules/
+Docs/package.json
+Docs/package-lock.json
+
+# Models & data (large, generated)
+Python/models/
+Python/replays/
+Python/checkpoints/
+Python/tb_logs/
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Compiled
+*.pdb

@@ -1,0 +1,1029 @@
+@startuml GAME_CORE_System_Architecture
+!theme plain
+skinparam linetype ortho
+skinparam classAttributeIconSize 0
+skinparam classFontSize 11
+skinparam classHeaderBackgroundColor #F0F0F0
+skinparam packageStyle rectangle
+skinparam groupInheritance 2
+skinparam nodesep 60
+skinparam ranksep 40
+
+title **GAME_CORE — Complete System Architecture**\n<i>UE5.7 C++ + Python RL Combat Boss AI</i>\n<i>Extensions 7-10: MAML, IRL, World Model, Emotion</i>
+
+' ============================================================================
+' ENUMS
+' ============================================================================
+package "Enums" <<Rectangle>> #FAFAD2 {
+  enum EBossAction {
+    Attack = 0
+    Block = 1
+    Dodge = 2
+    Approach = 3
+    Retreat = 4
+  }
+
+  enum EHitDirection {
+    Front
+    Back
+    Left
+    Right
+  }
+
+  enum EStaggerIntensity {
+    Light
+    Medium
+    Heavy
+  }
+
+  enum ECombatState {
+    Exploration
+    Combat
+  }
+
+  enum EPlayerEmotionalState {
+    Frustrated
+    Flow
+    Bored
+    Neutral
+  }
+}
+
+' ============================================================================
+' STRUCTS
+' ============================================================================
+package "Data Structs" <<Rectangle>> #E8F5E9 {
+  class FAttackAnimData <<(S,#FF7700) USTRUCT>> {
+    + Montage : UAnimMontage*
+    + PlayRate : float = 0.9
+    + BlendInTime : float = 0.2
+    + BlendOutTime : float = 0.25
+    + StartSection : FName
+    + bEnableRootMotion : bool = true
+    + DamageAmount : float = 10.0
+    + DamageType : FName = "Light"
+  }
+
+  class FDirectionalHitReaction <<(S,#FF7700) USTRUCT>> {
+    + HitFront : UAnimMontage*
+    + HitBack : UAnimMontage*
+    + HitLeft : UAnimMontage*
+    + HitRight : UAnimMontage*
+    + PlayRate : float = 1.0
+    + BlendInTime : float = 0.15
+    + BlendOutTime : float = 0.2
+    --
+    + GetMontageForDirection(EHitDirection) : UAnimMontage*
+  }
+
+  class FPlayerProfile <<(S,#FF7700) USTRUCT>> {
+    + AggressionScore : float
+    + DodgeTendency : float
+    + BlockTendency : float
+    + OpenerAggression : float
+    + PressureResponse : float
+    + KitingScore : float
+    + ComboCompletionRate : float
+    + PositionalVariance : float
+    --
+    + ToFloatArray() : TArray<float>
+    + ToJsonString() : FString
+    + FromJsonObject(FJsonObject)
+    + GetDimension(int32) : float
+    + SetDimension(int32, float)
+    + {static} GetProfileSize() : int32 = 8
+  }
+
+  class FRLObservation <<(S,#FF7700) USTRUCT>> {
+    + HeroVelocityNorm : FVector       [0-2]
+    + HeroComboStep : int32             [3]
+    + bHeroIsAttacking : bool           [4]
+    + HeroHealthPercent : float         [5]
+    + DistanceToHero : float            [6]
+    + AngleToHero : float               [7]
+    + BossHealthPercent : float         [8]
+    + PlayerProfile : FPlayerProfile   [9-16]
+    .. Extension 9: World Model ..
+    + HeroLastAction : int32 = 5        (estimated)
+    .. Extension 10: Emotion ..
+    + EmotionFrustration : float = 0.0
+    + EmotionFlowScore : float = 0.0
+    + EmotionBoredomScore : float = 0.0
+    --
+    + ToFloatArray() : TArray<float>   {17-dim base}
+    + ToJsonString() : FString
+  }
+
+  class FPlayerEncounterRecord <<(S,#FF7700) USTRUCT>> {
+    + Profile : FPlayerProfile
+    + EncounterIndex : int32
+    + bBossWon : bool
+    + FightDurationSeconds : float
+  }
+
+  class FPlayerMemoryData <<(S,#FF7700) USTRUCT>> {
+    + PlayerId : FString
+    + DecayedProfile : FPlayerProfile
+    + RecentEncounters : TArray<FPlayerEncounterRecord>
+    + TotalEncounters : int32
+    + BossWins : int32
+    + EncountersSinceActive : TArray<int32>
+  }
+
+  class FBossInsight <<(S,#FF7700) USTRUCT>> {
+    + TauntText : FText
+    + StrategyDescription : FText
+    + AdaptationTag : FName
+    + Confidence : float [0-1]
+    + ProfileDimensionIndex : int32
+  }
+
+  class FEmotionEstimate <<(S,#FF7700) USTRUCT>> {
+    + FrustrationScore : float [0-1]
+    + FlowScore : float [0-1]
+    + BoredomScore : float [0-1]
+    + DominantState : EPlayerEmotionalState
+    --
+    + ToJsonString() : FString
+  }
+
+  class FEncounterOutcome <<(S,#FF7700) USTRUCT>> {
+    + bBossWon : bool
+    + DurationSeconds : float
+    + HeroHPAtEnd : float
+    + BossHPAtEnd : float
+  }
+}
+
+' ============================================================================
+' DELEGATES
+' ============================================================================
+package "Delegates" <<Rectangle>> #FFF3E0 {
+  class FOnHealthDepleted <<(D,#E91E63) Delegate>> {
+    Broadcast()
+  }
+  class FOnAttackLanded <<(D,#E91E63) Delegate>> {
+    Broadcast(DamageAmount, DamageType)
+  }
+  class FOnHitReactionTriggered <<(D,#E91E63) Delegate>> {
+    Broadcast(InstigatorActor, DamageAmount, DamageType)
+  }
+  class FOnCombatStateChanged <<(D,#E91E63) Delegate>> {
+    Broadcast(NewState)
+  }
+  class FOnRLActionReceived <<(D,#E91E63) Delegate>> {
+    Broadcast(ActionIndex)
+  }
+  class FOnRLResetRequested <<(D,#E91E63) Delegate>> {
+    Broadcast()
+  }
+  class FOnBossInsightGenerated <<(D,#E91E63) Delegate>> {
+    Broadcast(FBossInsight)
+  }
+  class FOnEmotionEstimateUpdated <<(D,#E91E63) Delegate>> {
+    Broadcast(FEmotionEstimate)
+  }
+}
+
+' ============================================================================
+' DATA ASSET
+' ============================================================================
+class UCombatAnimConfig <<(A,#9C27B0) UDataAsset>> #F3E5F5 {
+  + ComboChain : TArray<FAttackAnimData>
+  + ComboWindowDuration : float = 0.6
+  --
+  + GetAttackData(int32) : FAttackAnimData*
+  + GetComboLength() : int32
+}
+
+' ============================================================================
+' COMBAT SYSTEM COMPONENTS
+' ============================================================================
+package "Combat System Components" <<Rectangle>> #E3F2FD {
+  class UCombatComponent <<(C,#2196F3) UActorComponent>> {
+    + MaxHealth : float = 100.0
+    + CurrentHealth : float
+    + CombatConfig : UCombatAnimConfig*
+    + WarpTargetName : FName = "AttackTarget"
+    + bEnableMotionWarping : bool
+    + OnHealthDepleted : FOnHealthDepleted
+    + OnAttackLanded : FOnAttackLanded
+    --
+    + ApplyDamage(float)
+    + RequestAttack()
+    + ResetCombo()
+    + IsAttacking() : bool
+    + GetComboStep() : int32
+    + SetWarpTarget(AActor*)
+    --
+    - ComboStep : int32
+    - bIsAttacking : bool
+    - bComboWindowOpen : bool
+    - bInputBuffered : bool
+    - CurrentComboMontage : UAnimMontage*
+    --
+    - PlayComboMontage(FAttackAnimData)
+    - OpenComboWindow()
+    - CloseComboWindow()
+    - UpdateMotionWarpTarget()
+  }
+
+  class UHitReactionComponent <<(C,#2196F3) UActorComponent>> {
+    + LightHitReactions : FDirectionalHitReaction
+    + MediumHitReactions : FDirectionalHitReaction
+    + HeavyHitReactions : FDirectionalHitReaction
+    + KnockbackMontage : UAnimMontage*
+    + MediumStaggerThreshold : float = 30.0
+    + HeavyStaggerThreshold : float = 60.0
+    + StaggerDecayRate : float = 15.0
+    + OnHitReactionTriggered : FOnHitReactionTriggered
+    --
+    + PlayHitReaction(AActor*, float, FName)
+    + GetCurrentStagger() : float
+    --
+    - CurrentStagger : float
+    - CalculateHitDirection(AActor*) : EHitDirection
+    - DetermineStaggerIntensity(float, FName) : EStaggerIntensity
+  }
+
+  class UHitFeedbackComponent <<(C,#2196F3) UActorComponent>> {
+    + HitStopTimeDilation : float = 0.05
+    + HitStopDuration : float = 0.08
+    + bEnableHitStop : bool
+    + bPauseAttackerAnim : bool
+    + AnimPauseDuration : float = 0.07
+    + HitCameraShake : TSubclassOf<UCameraShakeBase>
+    + CameraShakeScale : float = 1.0
+    --
+    + TriggerHitFeedback(AActor*)
+    + TriggerHeavyHitFeedback(AActor*)
+    --
+    - ApplyHitStop(float, float)
+    - PauseAttackerAnim(AActor*, float)
+    - PlayCameraShake(float)
+  }
+
+  class UCombatStateComponent <<(C,#2196F3) UActorComponent>> {
+    + IdleToCombatMontage : UAnimMontage*
+    + CombatToIdleMontage : UAnimMontage*
+    + CombatExitDelay : float = 4.0
+    + OnCombatStateChanged : FOnCombatStateChanged
+    --
+    + EnterCombat()
+    + ExitCombat()
+    + RefreshCombatTimer()
+    + GetCombatState() : ECombatState
+    + IsInCombat() : bool
+    --
+    - CurrentState : ECombatState
+  }
+}
+
+' ============================================================================
+' RL INTEGRATION COMPONENTS
+' ============================================================================
+package "RL Integration Components" <<Rectangle>> #FCE4EC {
+  class UStateObservationComponent <<(C,#E91E63) UActorComponent>> {
+    + HeroActor : AActor*
+    + MaxWalkSpeed : float = 600.0
+    + LiveProfileWeight : float = 0.6
+    --
+    + CollectObservation() : FRLObservation
+    + GetObservationJson() : FString
+    + {static} GetObservationSize() : int32 = 17
+    .. Extension 9: Hero Action Estimation ..
+    - EstimateHeroAction(Current, Previous) : int32
+    - PreviousObservation : FRLObservation
+    - bHasPreviousObservation : bool
+    .. Extension 10: Emotion Collection ..
+    - EmotionComponent : UEmotionEstimationComponent*
+    --
+    - FindCombatComponent(AActor*) : UCombatComponent*
+    - GetMergedProfile() : FPlayerProfile
+  }
+
+  class URLBridgeComponent <<(C,#E91E63) UActorComponent>> {
+    + ListenPort : int32 = 5555
+    + TickRate : int32 = 15
+    + bAutoStart : bool = true
+    + CurrentPlayerId : FString
+    + OnRLActionReceived : FOnRLActionReceived
+    + OnRLResetRequested : FOnRLResetRequested
+    --
+    + StartServer()
+    + StopServer()
+    + SendObservation(FString)
+    + SendReward(float, bool)
+    + IsClientConnected() : bool
+    --
+    - TcpListener : FTcpListener*
+    - ClientSocket : FSocket*
+    - ReceiveBuffer : FString
+    --
+    - ProcessMessage(FString)
+    - HandleObserveRequest()
+    - HandleGetProfileRequest()
+    - HandleSetPlayerId(FString)
+  }
+
+  class UBossActionComponent <<(C,#E91E63) UActorComponent>> {
+    + AttackMontage : UAnimMontage*
+    + BlockMontage : UAnimMontage*
+    + DodgeMontage : UAnimMontage*
+    + ApproachSpeed : float = 400.0
+    + RetreatSpeed : float = 300.0
+    + MoveDuration : float = 0.5
+    + TargetActor : AActor*
+    --
+    + ExecuteAction(int32)
+    + ExecuteActionEnum(EBossAction)
+    + IsPerformingAction() : bool
+    + {static} GetActionCount() : int32 = 5
+    --
+    - DoAttack() / DoBlock() / DoDodge()
+    - DoApproach() / DoRetreat()
+    - MoveInDirection(FVector, float, float)
+  }
+}
+
+' ============================================================================
+' PLAYER BEHAVIOR & MEMORY COMPONENTS
+' ============================================================================
+package "Player Behavior & Memory" <<Rectangle>> #F3E5F5 {
+  class UPlayerProfileComponent <<(C,#9C27B0) UActorComponent>> {
+    + BossActor : AActor*
+    + MeleeRangeThreshold : float = 300.0
+    + EmaAlpha : float = 0.05
+    + PositionHistorySize : int32 = 20
+    --
+    + GetProfile() : FPlayerProfile
+    + ResetEncounterTracking()
+    + RecordAttack()
+    + RecordDodge()
+    + RecordBlock()
+    + RecordHitTaken()
+    + RecordComboStarted()
+    + RecordComboCompleted()
+    --
+    - EmaAttackRate / EmaDodgeRate / EmaBlockRate / EmaKitingRate
+    - TotalActions / AttackActions / IncomingAttacks
+    - OpenerStepCount / OpenerAttackCount / bOpenerPhaseComplete
+    - LowHpSamples / LowHpAttackSamples
+    - PositionHistory : TArray<FVector2D>
+    --
+    - BindToCombatComponent()
+    - OnOwnerAttackLanded(float, FName)
+    - ComputePositionalVariance() : float
+  }
+
+  class UPlayerMemoryComponent <<(C,#9C27B0) UActorComponent>> {
+    + DecayEncounterThreshold : int32 = 5
+    + DecayRate : float = 0.15
+    + ActiveThreshold : float = 0.15
+    + MaxRecentEncounters : int32 = 20
+    --
+    + LoadMemory(FString PlayerId)
+    + SaveMemory()
+    + RecordEncounterEnd(FPlayerProfile, bool, float)
+    + GetDecayedProfile() : FPlayerProfile
+    + GetDecayedProfileJson() : FString
+    + GetTotalEncounters() : int32
+    + GetBossWinRate() : float
+    --
+    - MemoryData : FPlayerMemoryData
+    - ApplyDecay(FPlayerProfile)
+    ..persistence..
+    Saved/BossMemory/{PlayerId}.json
+  }
+
+  class UBossExplainabilityComponent <<(C,#9C27B0) UActorComponent>> {
+    + StrongTraitThreshold : float = 0.7
+    + WeakTraitThreshold : float = 0.3
+    + TauntOverrides : TMap<FName, FText>
+    + OnBossInsightGenerated : FOnBossInsightGenerated
+    --
+    + GenerateInsights(FPlayerProfile) : TArray<FBossInsight>
+    + GenerateTopTaunt(FPlayerProfile) : FText
+    + BroadcastInsights(FPlayerProfile)
+    .. Extension 10: Emotion-Aware Taunts ..
+    Frustrated → "A worthy foe learns..." (Empathy)
+    Bored → "Is that all you have?" (Provoke)
+    Flow → "Now the real battle begins" (Respect)
+    --
+    - InsightTemplates : TArray<FInsightTemplate>
+    - InitializeTemplates()
+  }
+}
+
+' ============================================================================
+' EXTENSION 10: EMOTION ESTIMATION COMPONENT
+' ============================================================================
+package "Emotion Estimation (Ext 10)" <<Rectangle>> #FFEBEE {
+  class UEmotionEstimationComponent <<(C,#D32F2F) UActorComponent>> {
+    + MaxRecentEncounters : int32 = 10
+    + FrustrationLossStreak : int32 = 3
+    + SpamRateMultiplier : float = 2.0
+    + DominanceThreshold : float = 0.3
+    + BoredomIdleThreshold : float = 3.0
+    + OnEmotionEstimateUpdated : FOnEmotionEstimateUpdated
+    --
+    + EstimateEmotion() : FEmotionEstimate
+    + RecordEncounterOutcome(bBossWon, Duration, HeroHP, BossHP)
+    + RecordPlayerAction(ActionIndex)
+    + ResetEncounterTracking()
+    --
+    - RecentEncounters : TArray<FEncounterOutcome>
+    - ActionHistory : TArray<int32>
+    - EncounterElapsedTime : float
+    - TimeSinceLastAction : float
+    - ActionCountThisEncounter : int32
+    - PreviousDominantState : EPlayerEmotionalState
+    .. Scoring (4 factors each) ..
+    - ComputeFrustration() : float
+    - ComputeFlow() : float
+    - ComputeBoredom() : float
+    .. Helpers ..
+    - GetConsecutiveLosses() : int32
+    - GetAverageFightDuration() : float
+    - GetActionEntropy() : float  {Shannon}
+    - GetRecentWinRate() : float
+    - GetAverageHPDifferential() : float
+    - IsFightDurationDecreasing() : bool
+  }
+}
+
+' ============================================================================
+' PYTHON RL SYSTEM
+' ============================================================================
+package "Python RL System" <<Rectangle>> #FFF8E1 {
+  class BossEnv <<(P,#FF9800) gym.Env>> {
+    observation_space : Box(dynamic)
+    action_space : Discrete(5)
+    host / port / player_id / cfg
+    .. Dynamic Observation Size ..
+    _obs_size : int  {17 + IRL 5 + Emotion 3}
+    _irl_enabled : bool
+    _emotion_enabled : bool
+    _irl_start : int / _emotion_start : int
+    _record_hero_actions : bool
+    --
+    + reset() -> obs, info
+    + step(action) -> obs, reward, term, trunc, info
+    + _compute_reward(obs) : float
+    + _receive_observation() : ndarray
+    + _receive_json() : dict
+    + _send(data) / _connect()
+    .. Extension 8: IRL Augmentation ..
+    + _load_irl_model() : MaxEntIRL
+    .. TCP Protocol ..
+    Port 5555 / Newline-delimited JSON
+  }
+
+  class ConstrainedBossEnv <<(P,#FF9800) gym.Wrapper>> {
+    target_win_rate : float = 0.45
+    max_epsilon : float = 0.3
+    win_history : deque
+    current_epsilon : float
+    .. Extension 10: Emotion Modulation ..
+    emotion_enabled : bool
+    emotion_obs_start : int
+    frustration_epsilon_boost : float = 0.15
+    frustration_reward_scale : float = 0.5
+    boredom_aggression_bonus : float = 0.3
+    flow_maintenance_bonus : float = 0.2
+    --
+    + step(action) -> applies incompetence
+    + get_win_rate() : float
+    + get_epsilon() : float
+    --
+    - _suboptimal_action(int) : int
+    - _engagement_reward(obs) : float
+    - _update_epsilon()
+    .. Extension 10 ..
+    - _get_emotion_scores(obs) : tuple
+    - _emotion_modulate_epsilon(obs)
+    - _emotion_modulate_reward(obs, reward, action) : float
+  }
+
+  class HierarchicalBossEnv <<(P,#FF9800) gym.Wrapper>> {
+    strategy_interval : int = 30
+    current_strategy : int [0-3]
+    observation_space : Box(21,)
+    --
+    + step(action) -> strategy reward shaping
+    + set_strategy(int)
+    + needs_strategy_update() : bool
+    + get_base_obs(aug_obs) : ndarray
+    --
+    17 base + 4 strategy one-hot = 21 dims
+  }
+
+  class StrategistEnv <<(P,#FF9800) gym.Env>> {
+    observation_space : Box(17,)
+    action_space : Discrete(4)
+    --
+    Each step = N tactician steps
+    Returns cumulative reward
+  }
+
+  class HierarchicalAgent <<(P,#FF9800)>> {
+    strategist : PPO -> Discrete(4)
+    tactician : PPO -> Discrete(5)
+    strategy_interval : int = 30
+    --
+    + predict(obs) -> action, info
+    + reset()
+    + save(directory)
+    + {static} load(directory) : HierarchicalAgent
+  }
+
+  class "strategy_reward" as StrategyReward <<(P,#FF9800) Module>> {
+    + aggressive_rush_reward(obs, action, prev)
+    + defensive_attrition_reward(obs, action, prev)
+    + hit_and_run_reward(obs, action, prev, history)
+    + counter_focused_reward(obs, action, prev, history)
+    + compute_strategy_reward(id, obs, action, prev, history, emotion_scores)
+    .. Extension 10 ..
+    + emotion_modulate_strategy_reward(emotion_scores, strategy_id) : float
+  }
+
+  class TransferLearningManager <<(P,#FF9800)>> {
+    base_model_dir / player_model_dir
+    replay_manager : ReplayBufferManager
+    --
+    + train_base_model(env, timesteps) : PPO
+    + load_player_model(player_id) : (PPO, is_new)
+    + save_player_model(model, player_id)
+    + fine_tune(model, env, timesteps, lr) : PPO
+    ..Model Storage..
+    models/base/base_model.zip
+    models/players/{id}.zip
+  }
+
+  class ReplayBufferManager <<(P,#FF9800)>> {
+    replay_dir : Path
+    --
+    + start_episode(player_id)
+    + record_step(obs, action, reward, next_obs, done, player_action)
+    + end_episode()
+    + aggregate_replays(min_episodes) : dict
+    + list_players() : list[str]
+    + load_player_replays(player_id) : list[dict]
+    + get_player_episode_count(player_id) : int
+    .. Extension 8: IRL Support ..
+    + get_player_trajectories(player_id) : list[list[tuple]]
+    .. Extension 7: MAML Support ..
+    + get_player_tasks(player_id, support_fraction) : PlayerTask
+    + get_all_player_tasks(min_episodes, support_fraction) : list[PlayerTask]
+    ..Storage..
+    replays/{player_id}/episode_*.npz
+    (obs, actions, rewards, next_obs, dones, player_actions)
+  }
+}
+
+' ============================================================================
+' EXTENSION 8: IRL PLAYER MODELING
+' ============================================================================
+package "IRL Player Modeling (Ext 8)" <<Rectangle>> #E8EAF6 {
+  class MaxEntIRL <<(P,#3F51B5)>> {
+    theta : ndarray  {20-dim reward weights}
+    feature_dim : int = 20
+    num_actions : int = 5
+    lr : float = 0.01
+    n_iterations : int = 200
+    --
+    + train(trajectories) : dict {metrics}
+    + predict_action_distribution(obs) : ndarray {5-dim P(a|s)}
+    + get_reward_weights() : ndarray
+    + save(path) / load(path)
+    --
+    - _compute_feature_expectations(trajectories) : ndarray
+    - _build_transition_model(trajectories)
+    - _soft_q_values(features) : ndarray
+    .. Algorithm ..
+    MaxEnt IRL (Ziebart et al. 2008)
+    R(s) = theta^T * phi(s)
+  }
+
+  class "irl_feature_engineering" as IRLFeatures <<(P,#3F51B5) Module>> {
+    + obs_to_irl_features(obs_17dim) : ndarray {20-dim}
+    + batch_obs_to_features(obs_batch) : ndarray {vectorized}
+    + trajectories_from_replays(episodes) : list[list[tuple]]
+    .. Derived Features ..
+    hp_difference, is_close_range, is_mid_range,
+    is_far_range, is_hero_low_hp, is_attacking_close,
+    retreating, hp_advantage, profile_dims[4]
+  }
+}
+
+' ============================================================================
+' EXTENSION 9: WORLD MODEL & PLANNING
+' ============================================================================
+package "World Model & Planning (Ext 9)" <<Rectangle>> #E0F2F1 {
+  class WorldModel <<(P,#009688) nn.Module>> {
+    input_dim : int  {obs + 5 boss + 6 player = 28}
+    output_dim : int  {obs + 1 reward = 18}
+    hidden_size : int = 128
+    --
+    + forward(x) : tensor
+    + predict(obs, boss_action, player_action) : (next_obs, reward)
+    .. Architecture ..
+    MLP: [28] -> 128 -> ReLU -> 128 -> ReLU -> [18]
+  }
+
+  class WorldModelTrainer <<(P,#009688)>> {
+    model : WorldModel
+    optimizer : Adam
+    --
+    + train_on_replays(replays, epochs, batch_size) : dict
+    + evaluate(test_data) : dict {per-dim MSE}
+    + save(path) / load(path)
+  }
+
+  class BossPlanner <<(P,#009688)>> {
+    world_model : WorldModel
+    irl_model : MaxEntIRL (optional)
+    lookahead_depth : int = 2
+    num_simulations : int = 5
+    planning_weight : float = 0.5
+    --
+    + plan(obs) : int {best action}
+    + evaluate_action(obs, boss_action, depth) : float
+    .. Strategy ..
+    Iterates 5 boss actions x top-K player actions
+    Recursive lookahead via world model
+    Weighted by IRL P(a|s) predictions
+  }
+
+  class "train_world_model.py" as TrainWMScript <<(P,#009688) Script>> {
+    + train : trains on all replay data
+    + evaluate : tests on held-out data
+    Reports per-dimension MSE
+  }
+}
+
+' ============================================================================
+' EXTENSION 7: MAML META-LEARNING
+' ============================================================================
+package "MAML Meta-Learning (Ext 7)" <<Rectangle>> #FBE9E7 {
+  class MamlPolicy <<(P,#BF360C) nn.Module>> {
+    obs_dim / num_actions / hidden_size
+    .. Actor ..
+    Linear -> Tanh -> Linear -> Tanh -> Linear
+    .. Critic ..
+    Linear -> Tanh -> Linear -> Tanh -> Linear(1)
+    --
+    + forward(obs) : (action_logits, value)
+    + get_action(obs) : (action, log_prob, value)
+    + inner_adapt(support_data, inner_lr, inner_steps) : MamlPolicy
+    + compute_meta_loss(tasks, inner_lr, inner_steps) : tensor
+    + compute_ppo_loss(obs, actions, returns, advantages) : dict
+    .. Key ..
+    torch.autograd.grad(create_graph=True)
+    for differentiable inner adaptation
+  }
+
+  class MAMLTrainer <<(P,#BF360C)>> {
+    meta_policy : MamlPolicy
+    meta_optimizer : Adam
+    replay_manager : ReplayBufferManager
+    --
+    + meta_train(iterations, tasks_per_batch, inner_lr, inner_steps) : dict
+    + adapt_to_player(player_id, num_inner_steps) : MamlPolicy
+    + evaluate_adaptation(player_id, max_steps, inner_lr) : dict
+    + save_meta_model(path) / load_meta_model(path)
+    --
+    - sample_tasks(num_tasks) : list[PlayerTask]
+    .. Key Metric ..
+    Query loss at 0,1,2,3 inner steps
+    Adaptation in 2-3 gradient steps
+  }
+
+  class "maml_data_utils" as MAMLDataUtils <<(P,#BF360C) Module>> {
+    + compute_returns(rewards, dones, gamma) : ndarray
+    + compute_gae(rewards, values, dones, gamma, lam) : ndarray
+    + replay_to_tasks(replay_mgr, min_episodes, fraction) : list
+    .. PlayerTask Dataclass ..
+    support_{obs, actions, rewards, dones}
+    query_{obs, actions, rewards, dones}
+    + to_tensors(gamma) : dict {torch tensors}
+  }
+
+  class "train_maml.py" as TrainMAMLScript <<(P,#BF360C) Script>> {
+    + meta_train : 5000 outer iterations
+    + adapt --player-id X : fast adaptation
+    + evaluate --player-id X : step-by-step loss
+    + stats : player data overview
+  }
+}
+
+' ============================================================================
+' TRAINING & INFERENCE SCRIPTS
+' ============================================================================
+package "Training & Inference Scripts" <<Rectangle>> #F5F5F5 {
+  class "train.py" as TrainScript <<(P,#FF9800) Script>> {
+    PPO flat training
+    + WinRateCallback
+    + make_env(cfg) -> Monitor
+    Optional: ConstrainedBossEnv wrapper
+  }
+
+  class "train_hierarchical.py" as TrainHierScript <<(P,#FF9800) Script>> {
+    + phase_a_pretrain_tactician (200k)
+    + phase_b_train_strategist (100k)
+    + phase_c_joint_finetune (200k)
+  }
+
+  class "train_transfer.py" as TrainTransferScript <<(P,#FF9800) Script>> {
+    + train_base
+    + train_player --player-id <id>
+    + stats
+  }
+
+  class "infer.py" as InferScript <<(P,#FF9800) Script>> {
+    + infer_flat (standard PPO)
+    + infer_hierarchical (strategist+tactician)
+    + infer_transfer (per-player model)
+    .. Extension 8 ..
+    + infer_irl (IRL-augmented obs)
+    .. Extension 9 ..
+    + infer_planning (world model planner)
+    .. Extension 7 ..
+    + infer_maml (meta-adapted PyTorch policy)
+    --flags--
+    --hierarchical / --transfer / --player-id
+    --irl / --planning / --maml
+  }
+}
+
+' ============================================================================
+' BLUEPRINT ACTORS
+' ============================================================================
+package "Blueprint Actors" <<Rectangle>> #E0F7FA {
+  class "BP_Boss" as BPBoss <<(B,#00BCD4) AActor>> {
+    Attached Components:
+    |- CombatComponent
+    |- HitReactionComponent
+    |- HitFeedbackComponent
+    |- BossActionComponent
+    |- StateObservationComponent
+    |- RLBridgeComponent
+    |- PlayerMemoryComponent
+    |- BossExplainabilityComponent
+    |- EmotionEstimationComponent  {Ext 10}
+    '- UMotionWarpingComponent
+  }
+
+  class "BP_NeuralHero" as BPHero <<(B,#00BCD4) AActor>> {
+    Attached Components:
+    |- CombatComponent
+    |- HitReactionComponent
+    |- HitFeedbackComponent
+    |- CombatStateComponent
+    |- PlayerProfileComponent
+    '- Mover Component
+  }
+}
+
+' ============================================================================
+' RELATIONSHIPS — Struct Composition
+' ============================================================================
+FRLObservation *-- FPlayerProfile : contains
+FRLObservation *-- FEmotionEstimate : emotion fields (Ext 10)
+FPlayerMemoryData *-- FPlayerProfile : DecayedProfile
+FPlayerMemoryData *-- "0..*" FPlayerEncounterRecord : RecentEncounters
+FPlayerEncounterRecord *-- FPlayerProfile : Profile
+UCombatAnimConfig *-- "1..*" FAttackAnimData : ComboChain
+
+' ============================================================================
+' RELATIONSHIPS — Component uses Struct
+' ============================================================================
+UCombatComponent --> UCombatAnimConfig : reads ComboChain
+UCombatComponent --> FAttackAnimData : plays montages from
+UHitReactionComponent --> FDirectionalHitReaction : uses 3 sets
+UStateObservationComponent --> FRLObservation : produces
+UPlayerProfileComponent --> FPlayerProfile : produces
+UPlayerMemoryComponent --> FPlayerMemoryData : manages
+UBossExplainabilityComponent --> FBossInsight : generates
+UBossExplainabilityComponent --> FPlayerProfile : reads
+UEmotionEstimationComponent --> FEmotionEstimate : produces
+UEmotionEstimationComponent --> FEncounterOutcome : tracks ring buffer
+
+' ============================================================================
+' RELATIONSHIPS — Component delegates
+' ============================================================================
+UCombatComponent --> FOnHealthDepleted : fires
+UCombatComponent --> FOnAttackLanded : fires
+UHitReactionComponent --> FOnHitReactionTriggered : fires
+UCombatStateComponent --> FOnCombatStateChanged : fires
+URLBridgeComponent --> FOnRLActionReceived : fires
+URLBridgeComponent --> FOnRLResetRequested : fires
+UBossExplainabilityComponent --> FOnBossInsightGenerated : fires
+UEmotionEstimationComponent --> FOnEmotionEstimateUpdated : fires
+
+' ============================================================================
+' RELATIONSHIPS — Component-to-Component runtime lookups
+' ============================================================================
+UStateObservationComponent ..> UCombatComponent : FindComponentByClass\n(reads hero & boss HP/combo)
+UStateObservationComponent ..> UPlayerProfileComponent : FindComponentByClass\n(reads live profile from hero)
+UStateObservationComponent ..> UPlayerMemoryComponent : FindComponentByClass\n(reads decayed profile)
+UStateObservationComponent ..> UEmotionEstimationComponent : FindComponentByClass\n(reads emotion estimate, Ext 10)
+URLBridgeComponent ..> UStateObservationComponent : FindComponentByClass\n(gets observation JSON)
+URLBridgeComponent ..> UPlayerMemoryComponent : FindComponentByClass\n(get_profile / set_player_id)
+UPlayerProfileComponent ..> UCombatComponent : binds OnAttackLanded\n(tracks player attacks)
+
+' ============================================================================
+' RELATIONSHIPS — Delegate bindings
+' ============================================================================
+FOnRLActionReceived ..> UBossActionComponent : bound\n(ExecuteAction)
+FOnAttackLanded ..> UPlayerProfileComponent : bound\n(OnOwnerAttackLanded)
+
+' ============================================================================
+' RELATIONSHIPS — Enum usage
+' ============================================================================
+UBossActionComponent --> EBossAction : dispatches
+UHitReactionComponent --> EHitDirection : calculates
+UHitReactionComponent --> EStaggerIntensity : determines
+UCombatStateComponent --> ECombatState : manages
+UEmotionEstimationComponent --> EPlayerEmotionalState : classifies
+FEmotionEstimate --> EPlayerEmotionalState : DominantState
+
+' ============================================================================
+' RELATIONSHIPS — Actor composition
+' ============================================================================
+BPBoss *-- UCombatComponent
+BPBoss *-- UHitReactionComponent
+BPBoss *-- UHitFeedbackComponent
+BPBoss *-- UBossActionComponent
+BPBoss *-- UStateObservationComponent
+BPBoss *-- URLBridgeComponent
+BPBoss *-- UPlayerMemoryComponent
+BPBoss *-- UBossExplainabilityComponent
+BPBoss *-- UEmotionEstimationComponent
+
+BPHero *-- UCombatComponent
+BPHero *-- UHitReactionComponent
+BPHero *-- UHitFeedbackComponent
+BPHero *-- UCombatStateComponent
+BPHero *-- UPlayerProfileComponent
+
+' ============================================================================
+' RELATIONSHIPS — Python env hierarchy
+' ============================================================================
+ConstrainedBossEnv --|> BossEnv : wraps
+HierarchicalBossEnv --|> BossEnv : wraps
+StrategistEnv --> HierarchicalBossEnv : uses tactician inside
+HierarchicalAgent --> StrategistEnv : trains on
+HierarchicalAgent --> HierarchicalBossEnv : trains on
+HierarchicalAgent --> StrategyReward : uses
+TransferLearningManager --> ReplayBufferManager : aggregates replays
+TransferLearningManager --> BossEnv : trains on
+
+' ============================================================================
+' RELATIONSHIPS — Extension 8: IRL
+' ============================================================================
+MaxEntIRL --> IRLFeatures : obs_to_irl_features()
+BossEnv ..> MaxEntIRL : augments obs with P(a|s)\n(when irl.enabled)
+ReplayBufferManager --> IRLFeatures : trajectories_from_replays()
+InferScript --> MaxEntIRL : loads for --irl mode
+
+' ============================================================================
+' RELATIONSHIPS — Extension 9: World Model & Planning
+' ============================================================================
+BossPlanner --> WorldModel : predicts next state
+BossPlanner --> MaxEntIRL : predicts player actions
+WorldModelTrainer --> WorldModel : trains
+WorldModelTrainer --> ReplayBufferManager : loads training data
+TrainWMScript --> WorldModelTrainer : orchestrates
+InferScript --> BossPlanner : uses for --planning mode
+
+' ============================================================================
+' RELATIONSHIPS — Extension 10: Emotion
+' ============================================================================
+ConstrainedBossEnv ..> BossEnv : reads emotion dims\n(frustration/flow/boredom)
+StrategyReward ..> ConstrainedBossEnv : emotion_modulate_strategy_reward()
+
+' ============================================================================
+' RELATIONSHIPS — Extension 7: MAML
+' ============================================================================
+MAMLTrainer --> MamlPolicy : meta-trains
+MAMLTrainer --> ReplayBufferManager : loads player tasks
+TrainMAMLScript --> MAMLTrainer : orchestrates
+InferScript --> MAMLTrainer : adapt_to_player() for --maml mode
+MamlPolicy --> MAMLDataUtils : compute_returns / compute_gae
+
+' ============================================================================
+' RELATIONSHIPS — Training scripts
+' ============================================================================
+TrainScript --> BossEnv : creates
+TrainScript --> ConstrainedBossEnv : optionally wraps
+TrainHierScript --> HierarchicalBossEnv : creates
+TrainHierScript --> StrategistEnv : creates
+TrainTransferScript --> TransferLearningManager : orchestrates
+InferScript --> BossEnv : creates
+InferScript --> HierarchicalAgent : loads
+
+' ============================================================================
+' RELATIONSHIPS — TCP Bridge (UE5 <-> Python)
+' ============================================================================
+URLBridgeComponent <===> BossEnv : **TCP Port 5555**\nNewline-delimited JSON\n(obs/action/reward/commands)\n+hero_action +emotion[]
+
+' ============================================================================
+' NOTES
+' ============================================================================
+note bottom of BossEnv
+  **Dynamic Observation Vector**
+  [0-2]  Hero velocity (normalized)
+  [3]    Hero combo step
+  [4]    Hero attacking (0/1)
+  [5]    Hero HP %
+  [6]    Distance (normalized)
+  [7]    Angle (normalized)
+  [8]    Boss HP %
+  [9-16] Player profile (8 dims)
+  ---- IRL enabled (+5) ----
+  [17-21] P(attack|s), P(block|s), P(dodge|s),
+          P(approach|s), P(retreat|s)
+  ---- Emotion enabled (+3) ----
+  [+0] Frustration score [0-1]
+  [+1] Flow score [0-1]
+  [+2] Boredom score [0-1]
+  ---- Max: 25 dims (17+5+3) ----
+  ---- With Hierarchical: 29 dims ----
+end note
+
+note bottom of UPlayerMemoryComponent
+  **Decay Algorithm**
+  For each profile dimension i:
+  if EncountersSinceActive[i] > threshold:
+    profile[i] = lerp(profile[i], 0.5, rate)
+  Prevents all-knowing boss.
+  Rewards strategy rotation.
+end note
+
+note bottom of ConstrainedBossEnv
+  **Fun Constraint + Emotion Modulation**
+  if win_rate > target + 5%:
+    epsilon = min(0.3, excess * 2)
+  ---- Extension 10 ----
+  Frustrated (>0.6): epsilon += 0.15
+  Bored (>0.6): epsilon -> near 0
+  Flow (>0.6): maintain stability
+end note
+
+note right of HierarchicalAgent
+  **Two-Level Policy**
+  Strategist: every 30 steps
+    -> selects archetype (0-3)
+  Tactician: every step
+    -> selects action (0-4)
+    conditioned on strategy
+end note
+
+note bottom of UEmotionEstimationComponent
+  **Behavioral Emotion Inference**
+  No hardware — purely from game signals
+  ---- Frustration (4 factors) ----
+  Loss streak (0.4) + duration decrease (0.2)
+  + action spam (0.2) + low entropy (0.2)
+  ---- Flow (4 factors) ----
+  Mixed outcomes (0.35) + close HP (0.25)
+  + high entropy (0.2) + stable duration (0.2)
+  ---- Boredom (4 factors) ----
+  Low action rate (0.3) + idle time (0.25)
+  + retreat-heavy (0.25) + easy wins (0.2)
+  Ticks at 4 Hz. Fires delegate on state change.
+end note
+
+note bottom of MAMLTrainer
+  **Meta-Learning Pipeline**
+  1. Collect replays from 8+ players (3+ episodes each)
+  2. meta_train: 5000 outer iterations
+     Sample tasks -> inner adapt -> query eval -> meta-grad
+  3. adapt_to_player: 2-3 gradient steps (seconds)
+  ---- Key Result ----
+  Win rate at 3 MAML steps should match
+  transfer learning at 50k fine-tune steps.
+end note
+
+note bottom of BossPlanner
+  **Deliberative Planning**
+  For each boss action (0-4):
+    For top-K player actions (via IRL):
+      Predict next_obs via WorldModel
+      Evaluate via value function or recurse
+  Returns highest expected value action.
+  Blended with policy: weight * plan + (1-w) * policy
+end note
+
+note right of MaxEntIRL
+  **Maximum Entropy IRL**
+  R(s) = theta^T * phi(s)
+  Recovers *why* player acts,
+  not just *what* they do.
+  ---- Prediction ----
+  Top-1 accuracy target: 35-50%
+  (vs 20% random baseline)
+end note
+
+@enduml
