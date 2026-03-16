@@ -1,0 +1,72 @@
+@startuml Player_Perspective
+!theme plain
+skinparam backgroundColor #FEFEFE
+skinparam actorStyle awesome
+skinparam defaultFontName Calibri
+skinparam defaultFontSize 12
+skinparam roundcorner 10
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam noteBackgroundColor #FFF8E1
+skinparam noteBorderColor #F59E0B
+
+title **Player Perspective**\n<i>What the player experiences during a fight</i>
+
+actor "Player" as player #0891B2
+
+rectangle "**Combat Encounter**" as encounter #F0F9FF {
+
+  rectangle "Player Actions" as pactions #E0F2FE {
+    usecase "Attack\n(Combo Chains)" as atk
+    usecase "Block" as blk
+    usecase "Dodge" as dge
+    usecase "Move\n(Approach/Retreat)" as mov
+  }
+
+  rectangle "Boss Reactions\n(RL-Driven)" as breact #FEF3C7 {
+    usecase "Adapts to\nYour Style" as adapt
+    usecase "Changes\nStrategy" as strat
+    usecase "Gets Easier\nWhen Frustrated" as easier
+    usecase "Gets Harder\nWhen Bored" as harder
+    usecase "Taunts You\n(Explainability)" as taunt
+  }
+
+  rectangle "What You Feel" as feel #F0FDF4 {
+    usecase "Boss Learns\nYour Patterns" as learn
+    usecase "Every Fight\nFeels Different" as diff
+    usecase "Difficulty\nFeels Fair" as fair
+    usecase "Close, Exciting\nFights" as close
+  }
+}
+
+player --> atk
+player --> blk
+player --> dge
+player --> mov
+
+atk --> adapt : your combos\nare profiled
+blk --> adapt
+dge --> adapt
+mov --> adapt
+
+adapt --> strat : profile drives\nstrategy choice
+adapt --> learn
+
+strat -[hidden]-> easier
+easier --> fair : frustration\ndetected
+harder --> diff : boredom\ndetected
+taunt --> learn : reveals boss\nreasoning
+
+fair --> close : win rate\ncapped ~45%
+
+note bottom of encounter
+  **What's happening behind the scenes:**
+  - 8-dim player profile tracks your style in real-time
+  - Boss remembers you across encounters (with decay)
+  - Emotion estimation reads your frustration/flow/boredom
+  - Boss win rate is capped at ~45% to keep fights fun
+  - Boss picks from 4 strategies: Aggressive, Defensive,
+    Hit-and-Run, Counter-Focused
+end note
+
+@enduml

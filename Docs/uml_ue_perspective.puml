@@ -1,0 +1,79 @@
+@startuml UE_Perspective
+!theme plain
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName Calibri
+skinparam defaultFontSize 11
+skinparam roundcorner 8
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam componentStyle rectangle
+skinparam noteBackgroundColor #F0F9FF
+skinparam noteBorderColor #0891B2
+
+title **Unreal Engine Perspective**\n<i>C++ components and their data flow</i>
+
+package "BP_Boss (AActor)" as boss #FEF3C7 {
+
+  component "**CombatComponent**\n---\nHealth, Combos,\nMotion Warping" as combat #FFE4B5
+
+  component "**StateObservationComponent**\n---\nCollects 17-dim obs\nEstimates hero actions\nIncludes emotion in JSON" as obs #FFE4B5
+
+  component "**RLBridgeComponent**\n---\nTCP server :5555\nSends obs JSON\nReceives action int" as bridge #FFE4B5
+
+  component "**BossActionComponent**\n---\n0=Attack  1=Block\n2=Dodge   3=Approach\n4=Retreat" as action #FFE4B5
+
+  component "**EmotionEstimationComponent**\n---\nFrustration / Flow / Boredom\nBehavioral signals @ 4Hz" as emotion #FFE4B5
+
+  component "**PlayerMemoryComponent**\n---\nCross-encounter memory\nPer-dim decay" as memory #FFE4B5
+
+  component "**HitFeedbackComponent**\n---\nHit stop, cam shake" as hitfb #FFE4B5
+
+  component "**BossExplainabilityComponent**\n---\nProfile + emotion taunts" as explain #FFE4B5
+}
+
+package "BP_NeuralHero (AActor)" as hero #E0F2FE {
+
+  component "**CombatComponent**\n---\nHealth, Combos,\nCombatAnimConfig" as hcombat #B3E5FC
+
+  component "**PlayerProfileComponent**\n---\n8-dim EMA vector\n(aggression, dodge, etc.)" as profile #B3E5FC
+
+  component "**CombatStateComponent**\n---\nExploration / Combat" as cstate #B3E5FC
+
+  component "**HitReactionComponent**\n---\nDirectional reactions\nStagger intensity" as hitr #B3E5FC
+}
+
+cloud "**Python RL**\n(TCP client)" as python #F3E8FF
+
+' --- Data flow ---
+obs --> bridge : JSON obs\n(17 dims + emotion + hero_action)
+bridge --> python : **send** over TCP :5555
+python --> bridge : **receive** {"action": 0-4}
+bridge --> action : parsed action int
+
+combat --> obs : boss HP,\ncombat state
+hcombat --> obs : hero HP, combo,\nattacking, velocity
+profile --> obs : 8-dim profile\nvector
+emotion --> obs : frustration,\nflow, boredom
+
+memory --> obs : recalled\nplayer data
+action --> combat : triggers attack\nanimations
+
+explain ..> emotion : emotion-aware\ntaunt selection
+explain ..> profile : profile-driven\ntaunt selection
+
+note right of bridge
+  **Protocol:**
+  Newline-delimited JSON
+  ~15 Hz tick rate
+  Localhost only
+end note
+
+note bottom of emotion
+  **Signals tracked:**
+  - Encounter win/loss history (ring buffer)
+  - Action entropy (Shannon)
+  - Action rate & idle time
+  - Fight duration trends
+end note
+
+@enduml

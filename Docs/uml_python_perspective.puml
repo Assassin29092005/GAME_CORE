@@ -1,0 +1,93 @@
+@startuml Python_Perspective
+!theme plain
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName Calibri
+skinparam defaultFontSize 11
+skinparam roundcorner 8
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam componentStyle rectangle
+skinparam noteBackgroundColor #FFF0F5
+skinparam noteBorderColor #8B5CF6
+
+title **Python RL Perspective**\n<i>ML systems, training, and inference pipeline</i>
+
+cloud "**UE5 Game**\n(TCP server :5555)" as ue5 #FEF3C7
+
+package "Core RL" as core #E0F2FE {
+
+  component "**BossEnv**\n(gymnasium.Env)\n---\nDynamic obs: 17-29 dims\nPhase-based reward\nTCP client" as env #B3E5FC
+
+  component "**ConstrainedBossEnv**\n(wrapper)\n---\nWin-rate cap ~45%\nEpsilon incompetence\nEmotion modulation" as constrained #B3E5FC
+
+  component "**HierarchicalBossEnv**\n(wrapper)\n---\nStrategist: 4 strategies\nTactician: 5 actions\n+4 one-hot obs dims" as hier #B3E5FC
+}
+
+package "Training Scripts" as training #F0FDF4 {
+  component "**train.py**\nPPO flat training\n500k steps" as train #C6F6D5
+  component "**train_hierarchical.py**\n3-phase training" as trainh #C6F6D5
+  component "**train_transfer.py**\nBase + per-player\nfine-tuning" as traint #C6F6D5
+}
+
+package "Novel Extensions" as novel #FFF0F5 {
+
+  component "**MaxEntIRL**\n(irl_player_model.py)\n---\nRecovers player reward\nPredicts P(a|s)\n20-dim features" as irl #FECDD3
+
+  component "**WorldModel**\n(world_model.py)\n---\nMLP dynamics\n28 in -> 18 out\nPredicts next state" as wm #FECDD3
+
+  component "**BossPlanner**\n(planning.py)\n---\n1-2 step lookahead\n5 actions x top-K player\nBlended with policy" as planner #FECDD3
+
+  component "**MamlPolicy**\n(maml_policy.py)\n---\nActor-Critic MLP\nDifferentiable inner loop\ncreate_graph=True" as maml #FECDD3
+
+  component "**MAMLTrainer**\n(maml_trainer.py)\n---\n5000 meta-iterations\n4 tasks/batch\nAdapt in 3 steps" as mamlt #FECDD3
+}
+
+database "**ReplayBufferManager**\n---\nreplays/{player_id}/\nepisode_NNNN.npz\n(obs, actions, rewards,\nnext_obs, dones)" as replays #E8E8E8
+
+component "**infer.py**\n---\n--irl  --planning\n--maml --hierarchical\n--transfer" as infer #F3E8FF
+
+' --- Connections ---
+
+ue5 <--> env : JSON over TCP
+
+env --> constrained : wraps
+constrained --> hier : wraps
+
+train --> env : trains PPO\non BossEnv
+trainh --> hier : trains\nhierarchical
+
+env ..> replays : saves episodes
+replays --> irl : trajectories for\nreward recovery
+replays --> wm : (s,a,a',s',r) for\nsupervised training
+replays --> mamlt : support/query\ntask splits
+
+irl --> env : +5 obs dims\nP(a|s)
+irl --> planner : predicted player\nactions
+
+wm --> planner : predicted\nnext state + reward
+
+mamlt --> maml : meta-trained\nweights
+
+infer --> env : loads model,\nruns policy
+infer --> planner : blends planner\nwith policy
+infer --> maml : adapts in\n3 grad steps
+
+note right of replays
+  **Replay format (.npz):**
+  obs: (T, 17) float32
+  actions: (T,) int32
+  rewards: (T,) float32
+  next_obs: (T, 17) float32
+  dones: (T,) bool
+  player_actions: (T,) int32
+end note
+
+note bottom of novel
+  **Novel contributions:**
+  All 4 systems are firsts in
+  real-time combat AI research.
+  Each can be toggled on/off
+  independently in config.yaml.
+end note
+
+@enduml
