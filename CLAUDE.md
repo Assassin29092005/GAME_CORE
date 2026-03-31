@@ -2,6 +2,12 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Prerequisites
+
+- Unreal Engine 5.7 (source or launcher)
+- Git LFS — `.uasset`, `.umap`, `.uexp` files are stored via LFS. Run `git lfs install` before cloning.
+- Python 3.10+ for RL training/inference
+
 ## Build & Run
 
 Unreal Engine 5.7 C++ project. Module: `GAME_CORE`. Solution: `GAME_CORE.sln`.
@@ -29,6 +35,10 @@ tensorboard --logdir tb_logs
 ```
 
 All Python config is in `Python/config.yaml`. Each extension has an `enabled: true/false` toggle.
+
+## Testing
+
+No automated test suite. Testing is manual: run the UE editor with the level open, then launch the appropriate Python script (`infer.py` or `train.py`). Verify behavior in-game and via TensorBoard metrics.
 
 ## Architecture
 
@@ -85,6 +95,19 @@ Extensions are loosely coupled. Each can be toggled independently in `config.yam
 - **Emotion-Aware AI** (`emotion`): C++ `EmotionEstimationComponent` estimates frustration/flow/boredom from behavioral signals. Python-side: `ConstrainedBossEnv` modulates epsilon, `strategy_reward` adjusts strategy preferences
 - **MAML Meta-Learning** (`maml`): `MamlPolicy` with differentiable inner adaptation (`create_graph=True`). `MAMLTrainer` meta-trains on multi-player data. Adapts to new players in 2-3 gradient steps
 
+### Python Files by Extension
+
+| Extension | Files |
+|---|---|
+| Core | `boss_env.py`, `train.py`, `infer.py`, `config.yaml` |
+| Hierarchical RL | `hierarchical_env.py`, `hierarchical_policy.py`, `train_hierarchical.py` |
+| Constrained Learning | `constrained_wrapper.py` |
+| Transfer Learning | `transfer_learning.py`, `train_transfer.py`, `replay_buffer_manager.py` |
+| IRL | `irl_player_model.py`, `irl_feature_engineering.py` |
+| World Model | `world_model.py`, `planning.py`, `train_world_model.py` |
+| MAML | `maml_policy.py`, `maml_trainer.py`, `train_maml.py`, `maml_data_utils.py` |
+| Shared | `strategy_reward.py` (emotion-based strategy preference modulation) |
+
 ### Key Data Flow Between Extensions
 
 ```
@@ -117,7 +140,7 @@ Follow Unreal Engine naming (enforced via `.editorconfig`):
 
 Module dependencies in `GAME_CORE.Build.cs`: Core, CoreUObject, Engine, InputCore, EnhancedInput, MotionWarping, Sockets, Networking, Json, JsonUtilities
 
-Key plugins: Mover (movement), MotionWarping, PoseSearch, AnimationWarping
+Enabled plugins (in `.uproject`): Mover (+ MoverExamples, MoverIntegrations), MotionWarping, MotionTrajectory, PoseSearch, AnimationWarping, AnimationLocomotionLibrary, Chooser, LiveLinkControlRig
 
 ## Python Conventions
 
@@ -128,6 +151,10 @@ Key plugins: Mover (movement), MotionWarping, PoseSearch, AnimationWarping
 - World model and MAML use PyTorch directly (not SB3)
 - `infer.py` supports multiple modes via flags: `--hierarchical`, `--transfer`, `--irl`, `--planning`, `--maml`
 
-## Architecture Diagram
+## Architecture Diagrams
 
-Full PlantUML diagram with all components, structs, relationships, and extensions: `Docs/system_architecture.puml`
+PlantUML diagrams in `Docs/`:
+- `system_architecture.puml` — full system (all components, structs, extensions)
+- `uml_ue_perspective.puml` — Unreal Engine / C++ focus
+- `uml_python_perspective.puml` — Python RL pipeline focus
+- `uml_player_perspective.puml` — player-facing view

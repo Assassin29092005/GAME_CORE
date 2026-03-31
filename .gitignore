@@ -11,6 +11,9 @@ Build/
 .idea/
 *.sln.user
 
+# Claude Code
+.claude/
+
 # Python
 Python/venv/
 Python/__pycache__/
