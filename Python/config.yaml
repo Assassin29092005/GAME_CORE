@@ -22,7 +22,7 @@ training:
 logging:
   tensorboard_dir: "./tb_logs"
   checkpoint_dir: "./checkpoints"
-  checkpoint_freq: 10000
+  checkpoint_freq: 2048
   log_interval: 10
 
 inference:
