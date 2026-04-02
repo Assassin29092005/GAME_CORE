@@ -56,12 +56,9 @@ FRLObservation UStateObservationComponent::CollectObservation()
 	if (!HeroActor || !BossActor) return Obs;
 
 	// Hero velocity (normalized by max walk speed)
-	const ACharacter* HeroChar = Cast<ACharacter>(HeroActor);
-	if (HeroChar)
-	{
-		const FVector Velocity = HeroChar->GetVelocity();
-		Obs.HeroVelocityNorm = Velocity / FMath::Max(MaxWalkSpeed, 1.0f);
-	}
+	// Use AActor::GetVelocity() which works for both ACharacter and Mover-based APawns
+	const FVector Velocity = HeroActor->GetVelocity();
+	Obs.HeroVelocityNorm = Velocity / FMath::Max(MaxWalkSpeed, 1.0f);
 
 	// Hero combat state
 	UCombatComponent* HeroCombat = FindCombatComponent(HeroActor);

@@ -36,13 +36,11 @@ void UCombatComponent::RequestAttack()
 {
 	if (!CombatConfig || CombatConfig->GetComboLength() == 0) return;
 
-	// If currently attacking but combo window is open, buffer input for next attack
+	// If currently attacking, buffer input for combo continuation
 	if (bIsAttacking)
 	{
-		if (bComboWindowOpen)
-		{
-			bInputBuffered = true;
-		}
+		// Buffer input regardless of combo window — will be consumed when window opens
+		bInputBuffered = true;
 		return;
 	}
 
@@ -238,9 +236,16 @@ void UCombatComponent::UpdateMotionWarpTarget()
 
 UAnimInstance* UCombatComponent::GetOwnerAnimInstance() const
 {
-	const ACharacter* OwnerChar = Cast<ACharacter>(GetOwner());
-	if (!OwnerChar) return nullptr;
+	AActor* Owner = GetOwner();
+	if (!Owner) return nullptr;
 
-	USkeletalMeshComponent* Mesh = OwnerChar->GetMesh();
+	// Try ACharacter::GetMesh() first, fall back to FindComponentByClass for Mover pawns
+	if (const ACharacter* OwnerChar = Cast<ACharacter>(Owner))
+	{
+		USkeletalMeshComponent* Mesh = OwnerChar->GetMesh();
+		if (Mesh) return Mesh->GetAnimInstance();
+	}
+
+	USkeletalMeshComponent* Mesh = Owner->FindComponentByClass<USkeletalMeshComponent>();
 	return Mesh ? Mesh->GetAnimInstance() : nullptr;
 }

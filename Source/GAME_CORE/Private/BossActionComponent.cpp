@@ -1,6 +1,6 @@
 #include "BossActionComponent.h"
 #include "Animation/AnimInstance.h"
-#include "GameFramework/Character.h"
+#include "GameFramework/Pawn.h"
 #include "Components/SkeletalMeshComponent.h"
 
 UBossActionComponent::UBossActionComponent()
@@ -12,10 +12,16 @@ void UBossActionComponent::TickComponent(float DeltaTime, ELevelTick TickType, F
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	if (bIsMoving && GetOwner())
+	if (bIsMoving)
 	{
-		const FVector Delta = MoveDirection * CurrentMoveSpeed * DeltaTime;
-		GetOwner()->AddActorWorldOffset(Delta, true);
+		APawn* OwnerPawn = Cast<APawn>(GetOwner());
+		if (OwnerPawn)
+		{
+			// Use AddMovementInput so the Mover/CharacterMover handles gravity, collision, and velocity.
+			// Scale: 1.0 = max speed for approach, reduced for retreat.
+			const float Scale = (CurrentMoveSpeed >= ApproachSpeed) ? 1.0f : 0.75f;
+			OwnerPawn->AddMovementInput(MoveDirection, Scale);
+		}
 	}
 }
 
@@ -122,10 +128,13 @@ void UBossActionComponent::StopMovement()
 
 void UBossActionComponent::PlayMontage(UAnimMontage* Montage)
 {
-	ACharacter* OwnerChar = Cast<ACharacter>(GetOwner());
-	if (!OwnerChar || !OwnerChar->GetMesh()) return;
+	AActor* Owner = GetOwner();
+	if (!Owner) return;
 
-	UAnimInstance* AnimInstance = OwnerChar->GetMesh()->GetAnimInstance();
+	USkeletalMeshComponent* Mesh = Owner->FindComponentByClass<USkeletalMeshComponent>();
+	if (!Mesh) return;
+
+	UAnimInstance* AnimInstance = Mesh->GetAnimInstance();
 	if (!AnimInstance) return;
 
 	AnimInstance->Montage_Play(Montage, 1.0f);

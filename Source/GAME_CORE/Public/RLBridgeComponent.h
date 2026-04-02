@@ -78,5 +78,6 @@ private:
 	void HandleObserveRequest();
 	void HandleGetProfileRequest();
 	void HandleSetPlayerId(const FString& PlayerId);
+	void HandleResetRequest();
 	void CleanupSockets();
 };

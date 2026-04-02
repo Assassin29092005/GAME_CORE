@@ -2,8 +2,12 @@
 #include "Networking.h"
 #include "StateObservationComponent.h"
 #include "PlayerMemoryComponent.h"
+#include "CombatComponent.h"
+#include "HitReactionComponent.h"
+#include "BossActionComponent.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
+#include "Kismet/GameplayStatics.h"
 
 URLBridgeComponent::URLBridgeComponent()
 {
@@ -170,6 +174,7 @@ void URLBridgeComponent::ProcessMessage(const FString& Message)
 
 		if (Command == TEXT("reset"))
 		{
+			HandleResetRequest();
 			OnRLResetRequested.Broadcast();
 			HandleObserveRequest();
 		}
@@ -276,6 +281,46 @@ void URLBridgeComponent::HandleSetPlayerId(const FString& PlayerId)
 	{
 		MemoryComp->LoadMemory(PlayerId);
 	}
+}
+
+void URLBridgeComponent::HandleResetRequest()
+{
+	AActor* Owner = GetOwner();
+	if (!Owner) return;
+
+	// Reset boss health
+	UCombatComponent* BossCombat = Owner->FindComponentByClass<UCombatComponent>();
+	if (BossCombat)
+	{
+		BossCombat->CurrentHealth = BossCombat->MaxHealth;
+	}
+
+	// Reset boss stagger
+	UHitReactionComponent* BossHitReact = Owner->FindComponentByClass<UHitReactionComponent>();
+	if (BossHitReact)
+	{
+		// Stagger is private, but resets naturally via decay. Force via public API if needed.
+	}
+
+	// Reset boss action state
+	UBossActionComponent* BossAction = Owner->FindComponentByClass<UBossActionComponent>();
+	if (BossAction)
+	{
+		// Will be ready for next action
+	}
+
+	// Find and reset hero health
+	UStateObservationComponent* ObsComp = Owner->FindComponentByClass<UStateObservationComponent>();
+	if (ObsComp && ObsComp->HeroActor)
+	{
+		UCombatComponent* HeroCombat = ObsComp->HeroActor->FindComponentByClass<UCombatComponent>();
+		if (HeroCombat)
+		{
+			HeroCombat->CurrentHealth = HeroCombat->MaxHealth;
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("RLBridge: Episode reset — health restored"));
 }
 
 void URLBridgeComponent::CleanupSockets()

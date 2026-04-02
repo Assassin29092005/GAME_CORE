@@ -82,10 +82,12 @@ void UHitFeedbackComponent::RestoreTimeDilation()
 
 void UHitFeedbackComponent::PauseAttackerAnim(AActor* Attacker, float Duration)
 {
-	ACharacter* AttackerChar = Cast<ACharacter>(Attacker);
-	if (!AttackerChar || !AttackerChar->GetMesh()) return;
+	if (!Attacker) return;
 
-	UAnimInstance* AnimInstance = AttackerChar->GetMesh()->GetAnimInstance();
+	USkeletalMeshComponent* Mesh = Attacker->FindComponentByClass<USkeletalMeshComponent>();
+	if (!Mesh) return;
+
+	UAnimInstance* AnimInstance = Mesh->GetAnimInstance();
 	if (!AnimInstance) return;
 
 	// Pause the current montage
@@ -119,10 +121,10 @@ void UHitFeedbackComponent::ResumeAttackerAnim()
 	AActor* Attacker = PendingResumeAttacker.Get();
 	if (!Attacker) return;
 
-	ACharacter* AttackerChar = Cast<ACharacter>(Attacker);
-	if (!AttackerChar || !AttackerChar->GetMesh()) return;
+	USkeletalMeshComponent* Mesh = Attacker->FindComponentByClass<USkeletalMeshComponent>();
+	if (!Mesh) return;
 
-	UAnimInstance* AnimInstance = AttackerChar->GetMesh()->GetAnimInstance();
+	UAnimInstance* AnimInstance = Mesh->GetAnimInstance();
 	if (!AnimInstance) return;
 
 	UAnimMontage* CurrentMontage = AnimInstance->GetCurrentActiveMontage();

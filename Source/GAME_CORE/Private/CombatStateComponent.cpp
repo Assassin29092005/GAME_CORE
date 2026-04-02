@@ -52,10 +52,13 @@ void UCombatStateComponent::PlayTransitionMontage(UAnimMontage* Montage)
 {
 	if (!Montage) return;
 
-	ACharacter* OwnerChar = Cast<ACharacter>(GetOwner());
-	if (!OwnerChar || !OwnerChar->GetMesh()) return;
+	AActor* Owner = GetOwner();
+	if (!Owner) return;
 
-	UAnimInstance* AnimInstance = OwnerChar->GetMesh()->GetAnimInstance();
+	USkeletalMeshComponent* Mesh = Owner->FindComponentByClass<USkeletalMeshComponent>();
+	if (!Mesh) return;
+
+	UAnimInstance* AnimInstance = Mesh->GetAnimInstance();
 	if (!AnimInstance) return;
 
 	AnimInstance->Montage_Play(Montage, 1.0f);

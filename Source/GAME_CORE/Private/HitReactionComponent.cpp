@@ -37,10 +37,13 @@ void UHitReactionComponent::PlayHitReaction(AActor* InstigatorActor, float Damag
 	// Broadcast before processing so profile tracking can record this hit
 	OnHitReactionTriggered.Broadcast(InstigatorActor, DamageAmount, DamageType);
 
-	ACharacter* OwnerChar = Cast<ACharacter>(GetOwner());
-	if (!OwnerChar || !OwnerChar->GetMesh()) return;
+	AActor* Owner = GetOwner();
+	if (!Owner) return;
 
-	UAnimInstance* AnimInstance = OwnerChar->GetMesh()->GetAnimInstance();
+	USkeletalMeshComponent* Mesh = Owner->FindComponentByClass<USkeletalMeshComponent>();
+	if (!Mesh) return;
+
+	UAnimInstance* AnimInstance = Mesh->GetAnimInstance();
 	if (!AnimInstance) return;
 
 	// Determine intensity before accumulating, so the current hit doesn't
