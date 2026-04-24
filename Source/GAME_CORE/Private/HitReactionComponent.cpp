@@ -1,4 +1,5 @@
 #include "HitReactionComponent.h"
+#include "CombatComponent.h"
 #include "Animation/AnimInstance.h"
 #include "GameFramework/Character.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -39,6 +40,10 @@ void UHitReactionComponent::PlayHitReaction(AActor* InstigatorActor, float Damag
 
 	AActor* Owner = GetOwner();
 	if (!Owner) return;
+
+	// Don't play hit reactions on a dead actor — death montage takes priority
+	UCombatComponent* CombatComp = Owner->FindComponentByClass<UCombatComponent>();
+	if (CombatComp && CombatComp->bIsDead) return;
 
 	USkeletalMeshComponent* Mesh = Owner->FindComponentByClass<USkeletalMeshComponent>();
 	if (!Mesh) return;

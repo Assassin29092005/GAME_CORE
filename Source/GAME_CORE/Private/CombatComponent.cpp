@@ -20,20 +20,35 @@ void UCombatComponent::BeginPlay()
 
 void UCombatComponent::ApplyDamage(float DamageAmount)
 {
-	if (CurrentHealth <= 0.0f) return;
+	if (bIsDead || CurrentHealth <= 0.0f) return;
 
 	CurrentHealth = FMath::Clamp(CurrentHealth - DamageAmount, 0.0f, MaxHealth);
 
 	if (CurrentHealth <= 0.0f)
 	{
+		bIsDead = true;
 		OnHealthDepleted.Broadcast();
 	}
+}
+
+void UCombatComponent::MarkHitLanded()
+{
+	bHitLandedThisAttack = true;
+}
+
+void UCombatComponent::ResetForNewRound()
+{
+	bIsDead = false;
+	CurrentHealth = MaxHealth;
+	ResetCombo();
+	UE_LOG(LogTemp, Log, TEXT("CombatComponent: Reset for new round — health restored, combo cleared"));
 }
 
 // --- Combo / Montage System ---
 
 void UCombatComponent::RequestAttack()
 {
+	if (bIsDead) return;
 	if (!CombatConfig || CombatConfig->GetComboLength() == 0) return;
 
 	// If currently attacking, buffer input for combo continuation
@@ -58,6 +73,7 @@ void UCombatComponent::PlayComboMontage(const FAttackAnimData& AttackData)
 	bIsAttacking = true;
 	bComboWindowOpen = false;
 	bInputBuffered = false;
+	bHitLandedThisAttack = false; // Fresh swing — allow one hit to land
 
 	UAnimMontage* Montage = AttackData.Montage;
 	CurrentComboMontage = Montage;
@@ -197,6 +213,7 @@ void UCombatComponent::ResetCombo()
 	bIsAttacking = false;
 	bComboWindowOpen = false;
 	bInputBuffered = false;
+	bHitLandedThisAttack = false;
 	CurrentComboMontage = nullptr;
 
 	UWorld* World = GetWorld();

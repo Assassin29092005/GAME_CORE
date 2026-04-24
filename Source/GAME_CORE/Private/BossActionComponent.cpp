@@ -12,9 +12,25 @@ void UBossActionComponent::TickComponent(float DeltaTime, ELevelTick TickType, F
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
+	AActor* Owner = GetOwner();
+	if (!Owner) return;
+
+	// Always smoothly rotate to face the hero (skip if dead)
+	if (!bIsDead && TargetActor)
+	{
+		FVector ToTarget = TargetActor->GetActorLocation() - Owner->GetActorLocation();
+		ToTarget.Z = 0.0f; // Ignore vertical difference — keep rotation on the horizontal plane
+		if (!ToTarget.IsNearlyZero(1.0f))
+		{
+			const FRotator TargetRot = ToTarget.Rotation();
+			const FRotator NewRot = FMath::RInterpTo(Owner->GetActorRotation(), TargetRot, DeltaTime, RotationInterpSpeed);
+			Owner->SetActorRotation(NewRot);
+		}
+	}
+
 	if (bIsMoving)
 	{
-		APawn* OwnerPawn = Cast<APawn>(GetOwner());
+		APawn* OwnerPawn = Cast<APawn>(Owner);
 		if (OwnerPawn)
 		{
 			// Use AddMovementInput so the Mover/CharacterMover handles gravity, collision, and velocity.
@@ -27,6 +43,8 @@ void UBossActionComponent::TickComponent(float DeltaTime, ELevelTick TickType, F
 
 void UBossActionComponent::ExecuteAction(int32 ActionIndex)
 {
+	if (bIsDead) return;
+
 	if (ActionIndex < 0 || ActionIndex >= static_cast<int32>(EBossAction::Count))
 	{
 		UE_LOG(LogTemp, Warning, TEXT("BossAction: Invalid action index %d"), ActionIndex);
@@ -36,9 +54,36 @@ void UBossActionComponent::ExecuteAction(int32 ActionIndex)
 	ExecuteActionEnum(static_cast<EBossAction>(ActionIndex));
 }
 
+void UBossActionComponent::HandleDeath()
+{
+	if (bIsDead) return; // Already handling death
+
+	bIsDead = true;
+	bIsPerformingAction = true; // Prevent any further actions
+	bIsMoving = false;
+
+	// Stop any in-progress movement timer
+	UWorld* World = GetWorld();
+	if (World)
+	{
+		World->GetTimerManager().ClearTimer(MoveTimerHandle);
+	}
+
+	// Play death montage if assigned
+	if (DeathMontage)
+	{
+		PlayMontage(DeathMontage);
+	}
+
+	// Notify Blueprint so it can trigger round reset after a delay
+	OnBossDied.Broadcast();
+
+	UE_LOG(LogTemp, Log, TEXT("BossAction: Boss has died — OnBossDied broadcast"));
+}
+
 void UBossActionComponent::ExecuteActionEnum(EBossAction Action)
 {
-	if (bIsPerformingAction) return;
+	if (bIsDead || bIsPerformingAction) return;
 
 	switch (Action)
 	{
@@ -124,6 +169,23 @@ void UBossActionComponent::StopMovement()
 	bIsPerformingAction = false;
 	MoveDirection = FVector::ZeroVector;
 	CurrentMoveSpeed = 0.0f;
+}
+
+void UBossActionComponent::ResetForNewRound()
+{
+	bIsDead = false;
+	bIsPerformingAction = false;
+	bIsMoving = false;
+	MoveDirection = FVector::ZeroVector;
+	CurrentMoveSpeed = 0.0f;
+
+	UWorld* World = GetWorld();
+	if (World)
+	{
+		World->GetTimerManager().ClearTimer(MoveTimerHandle);
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("BossAction: Reset for new round"));
 }
 
 void UBossActionComponent::PlayMontage(UAnimMontage* Montage)

@@ -16,6 +16,8 @@ enum class EBossAction : uint8
 	Count    UMETA(Hidden)
 };
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnBossDied);
+
 UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
 class GAME_CORE_API UBossActionComponent : public UActorComponent
 {
@@ -34,6 +36,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossAction|Montages")
 	TObjectPtr<UAnimMontage> DodgeMontage;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossAction|Montages")
+	TObjectPtr<UAnimMontage> DeathMontage;
+
 	// --- Movement ---
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BossAction|Movement")
 	float ApproachSpeed = 400.0f;
@@ -43,6 +48,10 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BossAction|Movement")
 	float MoveDuration = 0.5f;
+
+	/** How fast the boss rotates to face the hero (degrees/sec interpolation speed). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BossAction|Movement")
+	float RotationInterpSpeed = 8.0f;
 
 	// The hero actor to move toward/away from
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BossAction")
@@ -55,8 +64,23 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "BossAction")
 	void ExecuteActionEnum(EBossAction Action);
 
+	/** Called when boss health hits zero. Plays DeathMontage and broadcasts OnBossDied. */
+	UFUNCTION(BlueprintCallable, Category = "BossAction")
+	void HandleDeath();
+
+	/** Fired after HandleDeath() is called. Bind this in Blueprint to trigger round reset. */
+	UPROPERTY(BlueprintAssignable, Category = "BossAction")
+	FOnBossDied OnBossDied;
+
 	UFUNCTION(BlueprintPure, Category = "BossAction")
 	bool IsPerformingAction() const { return bIsPerformingAction; }
+
+	UFUNCTION(BlueprintPure, Category = "BossAction")
+	bool IsDead() const { return bIsDead; }
+
+	/** Call after round reset to re-enable actions (pairs with ResetForNewRound on CombatComponent). */
+	UFUNCTION(BlueprintCallable, Category = "BossAction")
+	void ResetForNewRound();
 
 	UFUNCTION(BlueprintPure, Category = "BossAction")
 	static int32 GetActionCount() { return static_cast<int32>(EBossAction::Count); }
@@ -77,6 +101,7 @@ private:
 	void StopMovement();
 
 	bool bIsPerformingAction = false;
+	bool bIsDead = false;
 	bool bIsMoving = false;
 	FVector MoveDirection = FVector::ZeroVector;
 	float CurrentMoveSpeed = 0.0f;

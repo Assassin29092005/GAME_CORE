@@ -17,16 +17,22 @@ void UANS_DealDamage::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenc
 {
 	Super::NotifyBegin(MeshComp, Animation, TotalDuration, EventReference);
 	bHasHitThisSwing = false;
+
 }
 
 void UANS_DealDamage::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float FrameDeltaTime, const FAnimNotifyEventReference& EventReference)
 {
 	Super::NotifyTick(MeshComp, Animation, FrameDeltaTime, EventReference);
 
-	if (bHasHitThisSwing || !MeshComp) return;
+	if (!MeshComp) return;
 
 	AActor* OwnerActor = MeshComp->GetOwner();
 	if (!OwnerActor) return;
+
+	// Use CombatComponent on the ATTACKER to guard one hit per swing.
+	// This is more reliable than a notify-state instance bool in UE5.
+	UCombatComponent* AttackerCombatGuard = OwnerActor->FindComponentByClass<UCombatComponent>();
+	if (AttackerCombatGuard && AttackerCombatGuard->bHitLandedThisAttack) return;
 
 	UWorld* World = OwnerActor->GetWorld();
 	if (!World) return;
@@ -49,21 +55,28 @@ void UANS_DealDamage::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequence
 		QueryParams
 	);
 
-	if (!bHit) return;
+	if (!bHit)
+	{
+		// Uncomment to spam-debug misses: UE_LOG(LogTemp, Verbose, TEXT("ANS_DealDamage: No hit this tick"));
+		return;
+	}
 
 	AActor* HitActor = HitResult.GetActor();
 	if (!HitActor) return;
 
-	bHasHitThisSwing = true;
+	// Lock out further hits this swing immediately
+	if (AttackerCombatGuard)
+	{
+		AttackerCombatGuard->MarkHitLanded();
+	}
 
 	// Look up damage from the attacker's current combo step
 	float DamageAmount = 10.0f;
 	FName DamageType = FName(TEXT("Light"));
 
-	UCombatComponent* AttackerCombat = OwnerActor->FindComponentByClass<UCombatComponent>();
-	if (AttackerCombat && AttackerCombat->CombatConfig)
+	if (AttackerCombatGuard && AttackerCombatGuard->CombatConfig)
 	{
-		const FAttackAnimData* AttackData = AttackerCombat->CombatConfig->GetAttackData(AttackerCombat->GetComboStep());
+		const FAttackAnimData* AttackData = AttackerCombatGuard->CombatConfig->GetAttackData(AttackerCombatGuard->GetComboStep());
 		if (AttackData)
 		{
 			DamageAmount = AttackData->DamageAmount;
@@ -71,7 +84,7 @@ void UANS_DealDamage::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequence
 		}
 
 		// Broadcast that this attack landed (for PlayerProfileComponent tracking)
-		AttackerCombat->OnAttackLanded.Broadcast(DamageAmount, DamageType);
+		AttackerCombatGuard->OnAttackLanded.Broadcast(DamageAmount, DamageType);
 	}
 
 	// Apply damage to the target's health

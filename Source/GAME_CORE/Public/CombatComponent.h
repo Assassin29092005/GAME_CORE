@@ -36,6 +36,14 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Combat|Health")
 	FOnHealthDepleted OnHealthDepleted;
 
+	/** True after health hits zero. Blocks further damage and attacks until ResetForNewRound(). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|Health")
+	bool bIsDead = false;
+
+	/** Restore full health and clear the dead flag. Call this when starting a new round. */
+	UFUNCTION(BlueprintCallable, Category = "Combat|Health")
+	void ResetForNewRound();
+
 	// --- Combo / Montage System ---
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Animation")
 	TObjectPtr<UCombatAnimConfig> CombatConfig;
@@ -45,6 +53,12 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Combat|Animation")
 	void ResetCombo();
+
+	/** Called by ANS_DealDamage when a hit lands — prevents multi-hit per swing. */
+	void MarkHitLanded();
+
+	/** True after the first hit of this swing has landed. Reset when next attack starts. */
+	bool bHitLandedThisAttack = false;
 
 	UFUNCTION(BlueprintPure, Category = "Combat|Animation")
 	bool IsAttacking() const { return bIsAttacking; }
