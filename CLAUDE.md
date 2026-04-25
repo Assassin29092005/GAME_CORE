@@ -18,6 +18,10 @@ UnrealBuildTool GAME_CORE Win64 Development "D:\GAME_CORE\GAME_CORE.uproject"
 ```
 Or build via Visual Studio / Rider from the solution file.
 
+**Build caveats:**
+- Close the UE editor before a full rebuild — a running editor locks `GAME_CORE.dll`.
+- Live Coding / Hot Reload does NOT pick up new `UPROPERTY` or `UFUNCTION` declarations reliably. Any change to reflected metadata (new BP-callable functions, new `EditAnywhere` properties, new delegates) needs a full rebuild with the editor closed.
+
 **Python RL setup and training (requires UE editor running with the level open):**
 ```
 cd Python
@@ -65,9 +69,27 @@ BP_NeuralHero: CombatComponent, CombatStateComponent, PlayerProfileComponent,
 
 Components find each other at runtime via `FindComponentByClass` (no hard references). `StateObservationComponent` looks up `CombatComponent` on both actors, `PlayerProfileComponent` on the hero, `PlayerMemoryComponent` and `EmotionEstimationComponent` on the boss.
 
+### Mover Plugin Gotchas
+
+BP_NeuralHero and BP_Boss are **APawn-based Mover pawns, not `ACharacter`**. Several patterns across the codebase exist specifically to work around this:
+
+- **Mesh lookup**: `CombatComponent::GetOwnerAnimInstance()` tries `ACharacter::GetMesh()` first, then falls back to `FindComponentByClass<USkeletalMeshComponent>()`. Use this pattern (or `FindComponentByClass` directly) in any new component — never assume `Cast<ACharacter>` succeeds.
+- **Input vector**: Mover consumes input through its own buffer (`IMoverInputProducerInterface`), not `APawn::AddMovementInput`. `GetLastMovementInputVector()` / `GetPendingMovementInputVector()` return zero on Mover pawns. `CombatComponent::SetMovementInput(FVector2D)` is the supported hook — the pawn BP calls it from `IA_Move Triggered`, and it transforms the value into world-space using the controller's yaw.
+- **Velocity lag**: `GetVelocity()` lags input by a frame or two because velocity is integrated by Mover *after* input is consumed. Code sampling velocity at "the instant of input" (e.g., attack-time combo selection) should prefer BP-pushed input over sampled velocity.
+- **Root motion**: Montages with root-motion flags drive Mover-integrated movement — the motion-warp target must be up to date before `Montage_Play`, which `PlayComboMontage` handles.
+
 ### Combat System
 
-`CombatAnimConfig` (UDataAsset) defines combo chains of `FAttackAnimData`. `CombatComponent` manages combo state with input buffering and a configurable combo window. Motion warping positions the attacker via `UMotionWarpingComponent`. Hit feedback uses global time dilation (~0.08s hit stop).
+`CombatAnimConfig` (UDataAsset) defines combo chains of `FAttackAnimData`. `CombatComponent` manages:
+
+- **Directional combos**: `NeutralComboConfig` / `ForwardComboConfig` / `BackwardComboConfig` / `SideComboConfig`, selected at each chain-start by `SelectComboByDirection()`. Priority: `LastMovementInput` (pushed from the pawn BP via `SetMovementInput` on `IA_Move`) → owner velocity → neutral. The BP hook is required because Mover pawns don't populate `APawn::GetLastMovementInputVector()` (see Mover gotchas above).
+- **Input buffering** within a configurable combo window (`CombatConfig->ComboWindowDuration`).
+- **Attack cooldown** (`AttackCooldownDuration`) blocks `RequestAttack` after a combo ends or is interrupted.
+- **Per-swing hit guard**: `bHitLandedThisAttack` on the attacker's `CombatComponent`. `UAnimNotifyState` instance variables proved unreliable in UE5, so `ANS_DealDamage` reads/writes this flag on the attacker rather than its own member. `MarkHitLanded()` sets it; `PlayComboMontage` clears it per swing.
+- **Death / round reset**: `ApplyDamage` sets `bIsDead` and broadcasts `OnHealthDepleted`. BPs bind this to play the death montage (boss uses `BossActionComponent::HandleDeath` + `OnBossDied`) and trigger `ResetForNewRound()` + respawn after a delay.
+- **Montage mutation caveat**: `PlayComboMontage` and `HitReactionComponent::PlayHitReaction` mutate the shared montage asset (`BlendIn`/`BlendOut` times, root-motion flags) before play. Safe ONLY if each combo step / intensity-direction pair uses a UNIQUE montage asset — sharing a montage across entries causes interleaved writes.
+
+Motion warping positions the attacker via `UMotionWarpingComponent`; `UpdateMotionWarpTarget` sets the warp target's location/rotation toward `WarpTargetActor` at each attack start. Hit feedback uses **per-actor `CustomTimeDilation`** for hit stop (not global time dilation) so the RL bridge timer is unaffected; attacker anim is paused via `Montage_Pause`/`Montage_Resume`.
 
 ### Observation Pipeline
 
@@ -81,7 +103,7 @@ Base observation is always 17 dims. Extensions add dimensions Python-side by par
 
 `BossEnv.__init__` computes `_obs_size` dynamically from config flags. Index offsets (`_irl_start`, `_emotion_start`) track where each augmentation begins.
 
-### Extension Architecture (7 extensions total)
+### Extension Architecture (9 extensions total)
 
 Extensions are loosely coupled. Each can be toggled independently in `config.yaml`:
 

@@ -39,16 +39,167 @@ void UCombatComponent::MarkHitLanded()
 void UCombatComponent::ResetForNewRound()
 {
 	bIsDead = false;
+	bInAttackCooldown = false;
 	CurrentHealth = MaxHealth;
+
+	UWorld* World = GetWorld();
+	if (World)
+	{
+		World->GetTimerManager().ClearTimer(CooldownTimerHandle);
+	}
+
 	ResetCombo();
 	UE_LOG(LogTemp, Log, TEXT("CombatComponent: Reset for new round — health restored, combo cleared"));
 }
 
 // --- Combo / Montage System ---
 
+void UCombatComponent::SetMovementInput(FVector2D InputValue)
+{
+	if (InputValue.IsNearlyZero(0.01f))
+	{
+		LastMovementInput = FVector::ZeroVector;
+		return;
+	}
+
+	AActor* Owner = GetOwner();
+	if (!Owner) return;
+
+	// Transform from controller-local (camera-relative) to world-space.
+	// IA_Move convention: X = A/D axis, Y = W/S axis.
+	FRotator ControlRot = Owner->GetActorRotation();
+	if (APawn* Pawn = Cast<APawn>(Owner))
+	{
+		if (AController* Controller = Pawn->GetController())
+		{
+			ControlRot = Controller->GetControlRotation();
+		}
+	}
+	ControlRot.Pitch = 0.0f;
+	ControlRot.Roll  = 0.0f;
+
+	const FRotationMatrix RotMat(ControlRot);
+	const FVector Fwd   = RotMat.GetUnitAxis(EAxis::X);
+	const FVector Right = RotMat.GetUnitAxis(EAxis::Y);
+
+	LastMovementInput = (Fwd * InputValue.Y + Right * InputValue.X).GetSafeNormal();
+}
+
+void UCombatComponent::ClearMovementInput()
+{
+	LastMovementInput = FVector::ZeroVector;
+}
+
+void UCombatComponent::SelectComboByDirection()
+{
+	AActor* Owner = GetOwner();
+	if (!Owner) return;
+
+	// Priority order for picking the combo direction:
+	//   1) LastMovementInput pushed from the pawn BP (IA_Move) — immediate, works even before Mover has moved anything.
+	//   2) Owner velocity above threshold — fallback if BP isn't hooked up yet.
+	// Both fail → neutral combo.
+	FVector DirVec = FVector::ZeroVector;
+
+	if (!LastMovementInput.IsNearlyZero(0.1f))
+	{
+		DirVec = LastMovementInput;
+	}
+	else
+	{
+		FVector Velocity = Owner->GetVelocity();
+		Velocity.Z = 0.0f;
+		if (Velocity.Size() >= MovementComboThreshold)
+		{
+			DirVec = Velocity.GetSafeNormal();
+		}
+	}
+
+	// No movement direction detected — neutral combo
+	if (DirVec.IsNearlyZero(0.1f))
+	{
+		if (NeutralComboConfig) CombatConfig = NeutralComboConfig;
+		UE_LOG(LogTemp, Log, TEXT("CombatComponent: SelectCombo → Neutral (no input/velocity)"));
+		return;
+	}
+
+	const FVector Forward = Owner->GetActorForwardVector();
+	const FVector Right   = Owner->GetActorRightVector();
+
+	const float ForwardDot = FVector::DotProduct(Forward, DirVec);
+	const float RightDot   = FVector::DotProduct(Right,   DirVec);
+
+	UE_LOG(LogTemp, Log, TEXT("CombatComponent: SelectCombo → FwdDot=%.2f RightDot=%.2f"), ForwardDot, RightDot);
+
+	if (FMath::Abs(ForwardDot) >= FMath::Abs(RightDot))
+	{
+		// Primarily forward or backward
+		if (ForwardDot >= 0.0f && ForwardComboConfig)
+		{
+			CombatConfig = ForwardComboConfig;
+			UE_LOG(LogTemp, Log, TEXT("CombatComponent: SelectCombo → Forward"));
+		}
+		else if (ForwardDot < 0.0f && BackwardComboConfig)
+		{
+			CombatConfig = BackwardComboConfig;
+			UE_LOG(LogTemp, Log, TEXT("CombatComponent: SelectCombo → Backward"));
+		}
+		else if (NeutralComboConfig)
+		{
+			CombatConfig = NeutralComboConfig;
+		}
+	}
+	else
+	{
+		// Primarily sideways
+		if (SideComboConfig)
+		{
+			CombatConfig = SideComboConfig;
+			UE_LOG(LogTemp, Log, TEXT("CombatComponent: SelectCombo → Side"));
+		}
+		else if (NeutralComboConfig)
+		{
+			CombatConfig = NeutralComboConfig;
+		}
+	}
+}
+
+void UCombatComponent::StartCooldown()
+{
+	bInAttackCooldown = true;
+	UWorld* World = GetWorld();
+	if (World && AttackCooldownDuration > 0.0f)
+	{
+		World->GetTimerManager().SetTimer(
+			CooldownTimerHandle,
+			this,
+			&UCombatComponent::ClearCooldown,
+			AttackCooldownDuration,
+			false
+		);
+	}
+	else
+	{
+		bInAttackCooldown = false;
+	}
+}
+
+void UCombatComponent::ClearCooldown()
+{
+	bInAttackCooldown = false;
+}
+
 void UCombatComponent::RequestAttack()
 {
 	if (bIsDead) return;
+	if (bInAttackCooldown) return;
+
+	// Snap to the right directional combo at the START of a new chain
+	if (!bIsAttacking)
+	{
+		SelectComboByDirection();
+	}
+
 	if (!CombatConfig || CombatConfig->GetComboLength() == 0) return;
 
 	// If currently attacking, buffer input for combo continuation
@@ -199,11 +350,13 @@ void UCombatComponent::OnMontageEnded(UAnimMontage* Montage, bool bInterrupted)
 	if (bInterrupted)
 	{
 		ResetCombo();
+		StartCooldown();
 	}
 	else if (!bComboWindowOpen)
 	{
-		// Montage finished naturally without combo continuation
+		// Montage finished naturally without combo continuation — apply cooldown
 		ResetCombo();
+		StartCooldown();
 	}
 }
 
