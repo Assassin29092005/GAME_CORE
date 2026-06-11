@@ -1,0 +1,36 @@
+@startuml Simple_UE_Perspective
+skinparam defaultFontSize 13
+skinparam shadowing false
+skinparam componentStyle rectangle
+skinparam backgroundColor #FFFFFF
+
+title Unreal Engine Perspective
+
+package "BP_Boss" #FEF3C7 {
+  [CombatComponent] as BC
+  [StateObservation] as SOC
+  [RLBridge\n(TCP :5555)] as RLB
+  [BossAction\n(0-4)] as BAC
+  [Emotion\nEstimation] as EMO
+  [Player\nMemory] as MEM
+  [Explainability] as EXP
+}
+
+package "BP_NeuralHero" #E0F2FE {
+  [CombatComponent] as HC
+  [PlayerProfile\n(8-dim EMA)] as PP
+  [CombatState] as CS
+}
+
+cloud "Python RL" as PY
+
+HC --> SOC : hero HP, combo
+PP --> SOC : profile
+EMO --> SOC : emotion
+MEM --> SOC : recalled data
+SOC --> RLB : JSON obs
+RLB <--> PY : TCP
+RLB --> BAC : action int
+EXP ..> EMO : taunts
+
+@enduml

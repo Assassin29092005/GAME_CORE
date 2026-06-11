@@ -1,0 +1,36 @@
+@startuml Simple_Python_Perspective
+skinparam defaultFontSize 13
+skinparam shadowing false
+skinparam componentStyle rectangle
+skinparam backgroundColor #FFFFFF
+
+title Python RL Perspective
+
+cloud "UE5 Game\n(TCP :5555)" as UE
+
+[BossEnv\n(17-25 dim obs)] as ENV #C5CAE9
+[ConstrainedBossEnv\n(win-rate cap)] as CENV #C5CAE9
+[HierarchicalBossEnv\n(strategy + tactics)] as HENV #C5CAE9
+
+[MaxEntIRL\n(player reward)] as IRL #FFCCBC
+[WorldModel +\nBossPlanner] as WM #FFCCBC
+[MAML\n(meta-learning)] as MAML #FFCCBC
+[Transfer\nLearning] as TL #FFCCBC
+
+database "Replays\n(.npz)" as REP
+
+UE <--> ENV
+ENV --> CENV : wraps
+CENV --> HENV : wraps
+
+REP --> IRL
+REP --> WM
+REP --> MAML
+REP --> TL
+ENV --> REP : episodes
+
+IRL --> ENV : +5 obs dims
+WM --> ENV : planning
+MAML --> ENV : adapted policy
+
+@enduml

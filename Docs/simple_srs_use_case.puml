@@ -1,0 +1,62 @@
+@startuml Simple_SRS_Use_Case
+skinparam defaultFontSize 13
+skinparam shadowing false
+skinparam actorStyle awesome
+skinparam backgroundColor #FFFFFF
+
+title SRS — Use Case Diagram
+
+actor "Player" as P #0277BD
+actor "Boss AI" as B #BF360C
+actor "Developer" as D #2E7D32
+
+rectangle "Combat System" #E3F2FD {
+  usecase (Attack) as UC1
+  usecase (Block) as UC2
+  usecase (Dodge) as UC3
+  usecase (Move) as UC4
+  usecase (Die & Respawn) as UC5
+}
+
+rectangle "Boss AI System" #FFF3E0 {
+  usecase (Observe State) as UC6
+  usecase (Select Action) as UC7
+  usecase (Execute Action) as UC8
+  usecase (Profile Player) as UC9
+  usecase (Estimate Emotion) as UC10
+  usecase (Constrain Difficulty) as UC11
+  usecase (Generate Taunt) as UC12
+}
+
+rectangle "Training System" #E8F5E9 {
+  usecase (Train PPO) as UC13
+  usecase (Train Hierarchical) as UC14
+  usecase (Train MAML) as UC15
+  usecase (Run Inference) as UC16
+  usecase (Configure Extensions) as UC17
+}
+
+P --> UC1
+P --> UC2
+P --> UC3
+P --> UC4
+P --> UC5
+
+B --> UC6
+B --> UC7
+B --> UC8
+
+UC7 ..> UC6 : <<include>>
+UC8 ..> UC7 : <<include>>
+UC7 ..> UC9 : <<include>>
+UC7 ..> UC10 : <<include>>
+UC11 ..> UC7 : <<extend>>
+UC12 ..> UC9 : <<include>>
+
+D --> UC13
+D --> UC14
+D --> UC15
+D --> UC16
+D --> UC17
+
+@enduml

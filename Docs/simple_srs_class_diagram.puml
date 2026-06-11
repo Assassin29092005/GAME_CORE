@@ -1,0 +1,101 @@
+@startuml Simple_SRS_Class_Diagram
+skinparam classAttributeIconSize 0
+skinparam classFontSize 14
+skinparam defaultFontSize 13
+skinparam shadowing false
+skinparam backgroundColor #FFFFFF
+skinparam nodesep 30
+skinparam ranksep 40
+
+title SRS — Class Diagram
+
+' === Blueprint Actors ===
+class BP_Boss <<APawn>> #FFE0B2
+class BP_NeuralHero <<APawn>> #BBDEFB
+
+' === Boss Components (grouped) ===
+together {
+  class UCombatComponent #E3F2FD {
+    + ApplyDamage(float)
+    + RequestAttack()
+  }
+
+  class UBossActionComponent #E3F2FD {
+    + ExecuteAction(int32)
+  }
+
+  class UStateObservationComponent #E3F2FD {
+    + CollectObservation()
+  }
+
+  class URLBridgeComponent #E3F2FD {
+    + SendObservation(FString)
+  }
+}
+
+' === Hero Components ===
+together {
+  class UPlayerProfileComponent #E3F2FD {
+    + GetProfile() : FPlayerProfile
+  }
+
+  class UEmotionEstimationComponent #E3F2FD {
+    + EstimateEmotion()
+  }
+
+  class UPlayerMemoryComponent #E3F2FD {
+    + LoadMemory(FString)
+  }
+}
+
+' === Structs ===
+together {
+  class FRLObservation <<struct>> #E8F5E9 {
+    17-dim vector
+  }
+
+  class FPlayerProfile <<struct>> #E8F5E9 {
+    8-dim EMA vector
+  }
+}
+
+' === Python ===
+together {
+  class BossEnv <<gym.Env>> #FFF8E1 {
+    + step(action) : tuple
+  }
+
+  class ReplayBufferManager #FFF8E1 {
+    + record_step(...)
+  }
+
+  class MaxEntIRL #FFF8E1 {
+    + predict_action_distribution()
+  }
+
+  class MamlPolicy <<nn.Module>> #FFF8E1 {
+    + inner_adapt()
+  }
+}
+
+' === Relationships ===
+BP_Boss *-down- UCombatComponent
+BP_Boss *-down- UBossActionComponent
+BP_Boss *-down- UStateObservationComponent
+BP_Boss *-down- URLBridgeComponent
+BP_Boss *-down- UEmotionEstimationComponent
+BP_Boss *-down- UPlayerMemoryComponent
+
+BP_NeuralHero *-down- UCombatComponent
+BP_NeuralHero *-down- UPlayerProfileComponent
+
+UStateObservationComponent -down-> FRLObservation : produces
+UPlayerProfileComponent -down-> FPlayerProfile : produces
+FRLObservation *-- FPlayerProfile
+
+URLBridgeComponent <-right-> BossEnv : TCP :5555
+BossEnv -down-> ReplayBufferManager : records
+ReplayBufferManager -down-> MaxEntIRL : trains
+ReplayBufferManager -down-> MamlPolicy : trains
+
+@enduml

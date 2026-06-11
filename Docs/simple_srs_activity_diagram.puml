@@ -1,0 +1,119 @@
+@startuml Simple_SRS_Activity_CombatLoop
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam backgroundColor #FFFFFF
+
+title SRS — Activity Diagram: Combat RL Loop
+
+start
+
+:Player provides input;
+
+if (Attack?) then (yes)
+  :Select combo by direction;
+  :Play combo montage;
+  :Apply damage to target;
+else (no)
+  :Process Block / Dodge / Move;
+endif
+
+:Update player profile (8-dim EMA);
+
+:Collect 17-dim observation;
+
+:Send observation JSON over TCP;
+
+:Python receives observation;
+
+:Policy predicts action (0-4);
+
+if (Win rate > 45%?) then (yes)
+  :Apply incompetence epsilon;
+else (no)
+endif
+
+:Send action over TCP;
+
+:Boss executes action;
+
+if (Attack hits?) then (yes)
+  :Play hit reaction;
+  :Apply hit stop + cam shake;
+else (no)
+endif
+
+:Compute reward;
+
+:Record step to replay buffer;
+
+if (HP = 0?) then (death)
+  :Save encounter to memory;
+  :Reset round;
+else (alive)
+endif
+
+stop
+
+@enduml
+
+
+@startuml Simple_SRS_Activity_Training
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam backgroundColor #FFFFFF
+
+title SRS — Activity Diagram: Training Pipeline
+
+start
+
+:Load config.yaml;
+
+fork
+  :Flat PPO training;
+fork again
+  :Hierarchical 3-phase training;
+fork again
+  :Transfer learning (base + per-player);
+fork again
+  :MAML meta-training;
+fork again
+  :World Model + IRL training;
+end fork
+
+:Save model checkpoints;
+
+stop
+
+@enduml
+
+
+@startuml Simple_SRS_Activity_Inference
+skinparam defaultFontSize 12
+skinparam shadowing false
+skinparam backgroundColor #FFFFFF
+
+title SRS — Activity Diagram: Inference
+
+start
+
+:Parse command-line flags;
+
+if (--hierarchical?) then (yes)
+  :Load strategist + tactician;
+elseif (--maml?) then (yes)
+  :Adapt to player in 3 grad steps;
+elseif (--irl --planning?) then (yes)
+  :Load IRL + WorldModel planner;
+else (default)
+  :Load flat PPO model;
+endif
+
+:Connect TCP :5555;
+
+repeat
+  :Receive obs > Predict > Send action;
+repeat while (Active?) is (yes)
+
+stop
+
+@enduml

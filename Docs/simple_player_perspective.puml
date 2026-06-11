@@ -1,0 +1,42 @@
+@startuml Simple_Player_Perspective
+skinparam defaultFontSize 13
+skinparam shadowing false
+skinparam actorStyle awesome
+skinparam backgroundColor #FFFFFF
+
+title Player Perspective
+
+actor "Player" as P #0891B2
+
+rectangle "Combat" #E0F2FE {
+  usecase "Attack\n(Combos)" as ATK
+  usecase "Block" as BLK
+  usecase "Dodge" as DGE
+  usecase "Move" as MOV
+}
+
+rectangle "Boss AI Behavior" #FEF3C7 {
+  usecase "Adapts to\nYour Style" as ADAPT
+  usecase "Changes\nStrategy" as STRAT
+  usecase "Adjusts\nDifficulty" as DIFF
+  usecase "Taunts You" as TAUNT
+}
+
+rectangle "Player Experience" #F0FDF4 {
+  usecase "Every Fight\nFeels Different" as UNIQ
+  usecase "Difficulty\nFeels Fair" as FAIR
+}
+
+P --> ATK
+P --> BLK
+P --> DGE
+P --> MOV
+
+ATK --> ADAPT
+ADAPT --> STRAT
+ADAPT --> DIFF
+DIFF --> FAIR
+STRAT --> UNIQ
+TAUNT --> UNIQ
+
+@enduml

@@ -1,0 +1,38 @@
+@startuml Simple_SRS_Overview
+skinparam defaultFontSize 13
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam backgroundColor #FFFFFF
+
+title SRS — System Overview
+
+actor "Player" as P
+
+package "Unreal Engine 5.7" #FFF8E1 {
+  [BP_NeuralHero] as Hero #BBDEFB
+  [BP_Boss] as Boss #FFE0B2
+  database "CombatAnimConfig" as CFG
+  database "BossMemory\n(JSON)" as MEM
+}
+
+interface "TCP :5555" as TCP
+
+package "Python RL" #F3E5F5 {
+  [BossEnv] as ENV
+  [RL Extensions] as EXT
+  database "Replays (.npz)" as REP
+  [TensorBoard] as TB
+}
+
+P --> Hero : gamepad input
+Hero <--> Boss : combat
+Boss --> CFG : combo data
+Boss --> MEM : persistence
+Boss <--> TCP : obs / action
+TCP <--> ENV
+ENV --> REP : episodes
+REP --> EXT : training
+EXT --> ENV : policy
+ENV --> TB : metrics
+
+@enduml

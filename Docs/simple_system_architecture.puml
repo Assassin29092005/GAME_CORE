@@ -1,0 +1,36 @@
+@startuml Simple_System_Architecture
+skinparam defaultFontSize 13
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam backgroundColor #FFFFFF
+
+title System Architecture — GAME_CORE
+
+actor "Player" as P
+
+package "Unreal Engine 5.7" #FFF8E1 {
+  [BP_NeuralHero\n(Combat + Profile)] as Hero #BBDEFB
+  [BP_Boss\n(Combat + RL + Memory + Emotion)] as Boss #FFE0B2
+  Hero <--> Boss : combat
+}
+
+cloud "TCP :5555\nJSON ~15Hz" as TCP
+
+package "Python RL" #F3E5F5 {
+  [BossEnv\n(Gym Environment)] as Env #C5CAE9
+  [Extensions\n(IRL / WorldModel / MAML\nHierarchical / Transfer)] as Ext #FFCCBC
+  database "Replays\n(.npz)" as Rep
+  [TensorBoard] as TB
+}
+
+P --> Hero : input
+Boss --> TCP : observation
+TCP --> Env : JSON obs
+Env --> TCP : action (0-4)
+TCP --> Boss : execute
+Env --> Rep : episodes
+Rep --> Ext : training data
+Ext --> Env : augmented policy
+Env --> TB : metrics
+
+@enduml
