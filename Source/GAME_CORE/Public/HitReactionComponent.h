@@ -85,6 +85,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HitReaction|Stagger")
 	float StaggerDecayRate = 15.0f;
 
+	/** Extra grace period after a hit reaction montage ends during which IsReacting() still
+	 *  returns true. Stops the next RL action from firing in the tiny gap between Montage_End
+	 *  and the next combo hit landing (which was causing the boss to dodge mid-combo). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HitReaction|Stagger")
+	float HitReactionGracePeriod = 0.25f;
+
 	// Fires when a hit reaction is triggered (before montage plays).
 	// Useful for PlayerProfileComponent to track incoming attacks.
 	UPROPERTY(BlueprintAssignable, Category = "HitReaction")
@@ -94,8 +100,20 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "HitReaction")
 	void PlayHitReaction(AActor* InstigatorActor, float DamageAmount, FName DamageType);
 
+	/** Clear stagger and any in-flight reaction state. Called by BossActionComponent::ResetForNewRound
+	 *  so post-reset hits don't inherit the previous round's accumulated stagger or grace timer. */
+	UFUNCTION(BlueprintCallable, Category = "HitReaction")
+	void ResetForNewRound();
+
 	UFUNCTION(BlueprintPure, Category = "HitReaction")
 	float GetCurrentStagger() const { return CurrentStagger; }
+
+	/** True from the moment a hit-reaction montage starts until it finishes AND the grace
+	 *  period elapses. BossActionComponent reads this to lock out RL actions while the boss
+	 *  is flinching, so an Attack arriving from the bridge mid-reaction doesn't pop into the
+	 *  attack montage. Non-inline because the grace check needs the world time. */
+	UFUNCTION(BlueprintPure, Category = "HitReaction")
+	bool IsReacting() const;
 
 protected:
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
@@ -105,5 +123,21 @@ private:
 	EStaggerIntensity DetermineStaggerIntensity(float DamageAmount, FName DamageType) const;
 	const FDirectionalHitReaction& GetReactionSet(EStaggerIntensity Intensity) const;
 
+	UFUNCTION()
+	void OnHitReactionMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+
 	float CurrentStagger = 0.0f;
+
+	bool bIsReacting = false;
+
+	/** World time (seconds) at which the last reaction montage ended. IsReacting() uses this
+	 *  with HitReactionGracePeriod to keep the lockout active for a short window after the
+	 *  flinch finishes — otherwise the next RL Action arriving from the bridge can fire
+	 *  in the gap and the boss visibly dodges/attacks mid-combo. */
+	float LastReactionEndTime = -1000.0f;
+
+	// Tracks the active hit-reaction montage so we ignore stale end-delegate callbacks
+	// (e.g., when one reaction interrupts another).
+	UPROPERTY()
+	TObjectPtr<UAnimMontage> CurrentReactionMontage;
 };

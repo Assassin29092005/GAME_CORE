@@ -2,10 +2,15 @@
 #include "Animation/AnimInstance.h"
 #include "GameFramework/Pawn.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "HitReactionComponent.h"
 
 UBossActionComponent::UBossActionComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
+	// Tick AFTER Mover has integrated its own movement/rotation for the frame.
+	// At default priority, Mover overwrites SetActorRotation each frame and the boss
+	// never visibly turns to face the hero. PostPhysics runs after Mover's update.
+	PrimaryComponentTick.TickGroup = TG_PostPhysics;
 }
 
 void UBossActionComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -15,16 +20,48 @@ void UBossActionComponent::TickComponent(float DeltaTime, ELevelTick TickType, F
 	AActor* Owner = GetOwner();
 	if (!Owner) return;
 
-	// Always smoothly rotate to face the hero (skip if dead)
+	// Always smoothly rotate to face the hero (skip if dead).
+	// Yaw-only and TeleportPhysics so we set the authoritative rotation outright instead of
+	// asking the physics scene to sweep — Mover's velocity-driven facing would otherwise
+	// snap back to the movement direction next frame.
 	if (!bIsDead && TargetActor)
 	{
 		FVector ToTarget = TargetActor->GetActorLocation() - Owner->GetActorLocation();
 		ToTarget.Z = 0.0f; // Ignore vertical difference — keep rotation on the horizontal plane
 		if (!ToTarget.IsNearlyZero(1.0f))
 		{
-			const FRotator TargetRot = ToTarget.Rotation();
-			const FRotator NewRot = FMath::RInterpTo(Owner->GetActorRotation(), TargetRot, DeltaTime, RotationInterpSpeed);
-			Owner->SetActorRotation(NewRot);
+			const FRotator CurrentRot = Owner->GetActorRotation();
+			FRotator TargetRot = ToTarget.Rotation();
+			TargetRot.Pitch = CurrentRot.Pitch;
+			TargetRot.Roll = CurrentRot.Roll;
+			const FRotator NewRot = FMath::RInterpTo(CurrentRot, TargetRot, DeltaTime, RotationInterpSpeed);
+			Owner->SetActorRotation(NewRot, ETeleportType::TeleportPhysics);
+
+			// Verbose-by-default debug log so we can diagnose whether rotation is actually
+			// firing in PIE. If this never prints, TargetActor is null or ToTarget is zero;
+			// if it prints but the boss doesn't visibly turn, Mover is overwriting us
+			// despite TG_PostPhysics + TeleportPhysics (next step: check Mover modes).
+			// Throttle to once per second to avoid log spam.
+			static double LastLogTime = 0.0;
+			const double Now = GetWorld()->GetTimeSeconds();
+			if (Now - LastLogTime > 1.0)
+			{
+				LastLogTime = Now;
+				UE_LOG(LogTemp, Log,
+					TEXT("BossAction: Rotation tick — CurYaw=%.1f TgtYaw=%.1f NewYaw=%.1f InterpSpeed=%.1f Dt=%.4f"),
+					CurrentRot.Yaw, TargetRot.Yaw, NewRot.Yaw, RotationInterpSpeed, DeltaTime);
+			}
+		}
+	}
+	else if (!bIsDead)
+	{
+		// TargetActor is null — log once so SetupBossAI failures are obvious.
+		static double LastNullLogTime = 0.0;
+		const double Now = GetWorld()->GetTimeSeconds();
+		if (Now - LastNullLogTime > 5.0)
+		{
+			LastNullLogTime = Now;
+			UE_LOG(LogTemp, Warning, TEXT("BossAction: TargetActor is null — rotation skipped. SetupBossAI may not have run."));
 		}
 	}
 
@@ -84,6 +121,17 @@ void UBossActionComponent::HandleDeath()
 void UBossActionComponent::ExecuteActionEnum(EBossAction Action)
 {
 	if (bIsDead || bIsPerformingAction) return;
+
+	// Lock out RL actions while a hit reaction is playing — otherwise the next action
+	// arriving from the bridge (~15 Hz) interrupts the flinch montage and the boss
+	// pops straight into Attack/Block/etc. mid-stagger.
+	if (AActor* Owner = GetOwner())
+	{
+		if (UHitReactionComponent* HitReaction = Owner->FindComponentByClass<UHitReactionComponent>())
+		{
+			if (HitReaction->IsReacting()) return;
+		}
+	}
 
 	switch (Action)
 	{
@@ -183,6 +231,29 @@ void UBossActionComponent::ResetForNewRound()
 	if (World)
 	{
 		World->GetTimerManager().ClearTimer(MoveTimerHandle);
+	}
+
+	// Stop the death montage (or any other lingering action montage) so the boss
+	// returns to the locomotion state machine instead of staying laid out on the floor.
+	// Without this, HandleDeath's DeathMontage keeps playing through the reset.
+	if (AActor* Owner = GetOwner())
+	{
+		if (USkeletalMeshComponent* Mesh = Owner->FindComponentByClass<USkeletalMeshComponent>())
+		{
+			if (UAnimInstance* AnimInstance = Mesh->GetAnimInstance())
+			{
+				AnimInstance->StopAllMontages(0.2f);
+			}
+		}
+
+		// Reset the hit-reaction component too — otherwise post-reset hits
+		// inherit the previous round's accumulated stagger (so a single light
+		// hit can immediately escalate to Heavy) and the grace timer can
+		// briefly lock out the first RL action of the new round.
+		if (UHitReactionComponent* HitReaction = Owner->FindComponentByClass<UHitReactionComponent>())
+		{
+			HitReaction->ResetForNewRound();
+		}
 	}
 
 	UE_LOG(LogTemp, Log, TEXT("BossAction: Reset for new round"));

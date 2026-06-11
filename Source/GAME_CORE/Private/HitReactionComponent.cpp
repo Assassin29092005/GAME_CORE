@@ -78,10 +78,65 @@ void UHitReactionComponent::PlayHitReaction(AActor* InstigatorActor, float Damag
 	Montage->BlendIn.SetBlendTime(ReactionSet.BlendInTime);
 	Montage->BlendOut.SetBlendTime(ReactionSet.BlendOutTime);
 
-	AnimInstance->Montage_Play(Montage, ReactionSet.PlayRate);
+	const float Duration = AnimInstance->Montage_Play(Montage, ReactionSet.PlayRate);
+
+	if (Duration > 0.0f)
+	{
+		bIsReacting = true;
+		CurrentReactionMontage = Montage;
+
+		// Bind end delegate AFTER Montage_Play so the montage instance exists.
+		// We use this to clear bIsReacting so BossActionComponent re-enables RL actions.
+		FOnMontageEnded EndDelegate;
+		EndDelegate.BindUObject(this, &UHitReactionComponent::OnHitReactionMontageEnded);
+		AnimInstance->Montage_SetEndDelegate(EndDelegate, Montage);
+	}
 
 	UE_LOG(LogTemp, Log, TEXT("HitReaction: Direction=%d, Intensity=%d, Stagger=%.1f"),
 		static_cast<int32>(Direction), static_cast<int32>(Intensity), CurrentStagger);
+}
+
+void UHitReactionComponent::OnHitReactionMontageEnded(UAnimMontage* Montage, bool bInterrupted)
+{
+	// Ignore stale callbacks from a previous reaction that got interrupted by a newer one
+	// (Montage_SetEndDelegate is per-montage, but a bind from a prior call can still fire late).
+	if (Montage != CurrentReactionMontage)
+	{
+		return;
+	}
+
+	bIsReacting = false;
+	CurrentReactionMontage = nullptr;
+
+	// Record when the reaction finished so IsReacting() can keep returning true for
+	// HitReactionGracePeriod seconds — otherwise the next bridge action (~67ms cadence)
+	// fires in the gap and the boss visibly pops into Dodge/Attack mid-combo.
+	if (UWorld* World = GetWorld())
+	{
+		LastReactionEndTime = World->GetTimeSeconds();
+	}
+}
+
+bool UHitReactionComponent::IsReacting() const
+{
+	if (bIsReacting) return true;
+
+	if (HitReactionGracePeriod <= 0.0f) return false;
+
+	const UWorld* World = GetWorld();
+	if (!World) return false;
+
+	return (World->GetTimeSeconds() - LastReactionEndTime) < HitReactionGracePeriod;
+}
+
+void UHitReactionComponent::ResetForNewRound()
+{
+	CurrentStagger = 0.0f;
+	bIsReacting = false;
+	CurrentReactionMontage = nullptr;
+	// Push the end time far into the past so the grace period is already expired
+	// at the start of the new round.
+	LastReactionEndTime = -1000.0f;
 }
 
 EHitDirection UHitReactionComponent::CalculateHitDirection(AActor* InstigatorActor) const

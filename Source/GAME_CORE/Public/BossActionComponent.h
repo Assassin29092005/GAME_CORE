@@ -78,6 +78,24 @@ public:
 	UFUNCTION(BlueprintPure, Category = "BossAction")
 	bool IsDead() const { return bIsDead; }
 
+	// --- Locomotion state for ABP_Boss state machine ---
+
+	/** True while a movement command (Approach/Retreat) is actively driving input. Use for idle ↔ locomotion transition. */
+	UFUNCTION(BlueprintPure, Category = "BossAction|Locomotion")
+	bool IsMoving() const { return bIsMoving; }
+
+	/** True when the active movement is an Approach (faster, toward hero). False during Retreat or when idle. Use for slide/charge anim. */
+	UFUNCTION(BlueprintPure, Category = "BossAction|Locomotion")
+	bool IsApproaching() const { return bIsMoving && CurrentMoveSpeed >= ApproachSpeed; }
+
+	/** Intended movement speed in cm/s for the current command. Zero when idle. Drives blendspace speed axis. */
+	UFUNCTION(BlueprintPure, Category = "BossAction|Locomotion")
+	float GetIntendedMoveSpeed() const { return bIsMoving ? CurrentMoveSpeed : 0.0f; }
+
+	/** World-space direction of the current movement command. Zero vector when idle. */
+	UFUNCTION(BlueprintPure, Category = "BossAction|Locomotion")
+	FVector GetIntendedMoveDirection() const { return bIsMoving ? MoveDirection : FVector::ZeroVector; }
+
 	/** Call after round reset to re-enable actions (pairs with ResetForNewRound on CombatComponent). */
 	UFUNCTION(BlueprintCallable, Category = "BossAction")
 	void ResetForNewRound();

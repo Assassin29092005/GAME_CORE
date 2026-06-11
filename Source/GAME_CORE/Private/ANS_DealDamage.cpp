@@ -18,6 +18,22 @@ void UANS_DealDamage::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenc
 	Super::NotifyBegin(MeshComp, Animation, TotalDuration, EventReference);
 	bHasHitThisSwing = false;
 
+	// Reset the attacker's per-swing hit guard so this new swing can land a hit.
+	// CombatComponent::PlayComboMontage clears bHitLandedThisAttack for the hero combo path,
+	// but boss attacks (BossActionComponent::DoAttack → PlayMontage) bypass that path,
+	// so without this reset the boss would land at most ONE hit ever, then be permanently
+	// blocked. Clearing it here on every NotifyBegin makes the guard work for any attacker.
+	AActor* Attacker = MeshComp ? MeshComp->GetOwner() : nullptr;
+	UCombatComponent* AttackerCombat = Attacker ? Attacker->FindComponentByClass<UCombatComponent>() : nullptr;
+	if (AttackerCombat)
+	{
+		AttackerCombat->bHitLandedThisAttack = false;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("ANS_DealDamage: NotifyBegin — Attacker=%s Anim=%s AttackerCombat=%s"),
+		Attacker ? *Attacker->GetName() : TEXT("null"),
+		Animation ? *Animation->GetName() : TEXT("null"),
+		AttackerCombat ? TEXT("FOUND") : TEXT("NULL"));
 }
 
 void UANS_DealDamage::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float FrameDeltaTime, const FAnimNotifyEventReference& EventReference)
@@ -89,10 +105,25 @@ void UANS_DealDamage::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequence
 
 	// Apply damage to the target's health
 	UCombatComponent* TargetCombat = HitActor->FindComponentByClass<UCombatComponent>();
+	const float TargetHPBefore = TargetCombat ? TargetCombat->CurrentHealth : -1.0f;
 	if (TargetCombat)
 	{
 		TargetCombat->ApplyDamage(DamageAmount);
 	}
+
+	// LOG: Every successful damage application — if you see >1 of these per NotifyBegin,
+	// the per-swing guard is failing and the bug is in this function. If you see exactly 1
+	// but HP still drops by more than DamageAmount, the bug is elsewhere (BP-side wiring,
+	// duplicate ApplyDamage call, etc).
+	UE_LOG(LogTemp, Warning,
+		TEXT("ANS_DealDamage: HIT — Attacker=%s Target=%s Dmg=%.1f Type=%s TargetHP %.1f→%.1f GuardWasSet=%d"),
+		*OwnerActor->GetName(),
+		*HitActor->GetName(),
+		DamageAmount,
+		*DamageType.ToString(),
+		TargetHPBefore,
+		TargetCombat ? TargetCombat->CurrentHealth : -1.0f,
+		(AttackerCombatGuard && AttackerCombatGuard->bHitLandedThisAttack) ? 1 : 0);
 
 	// Trigger hit reaction on the target
 	UHitReactionComponent* TargetHitReaction = HitActor->FindComponentByClass<UHitReactionComponent>();
@@ -113,4 +144,8 @@ void UANS_DealDamage::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceB
 {
 	Super::NotifyEnd(MeshComp, Animation, EventReference);
 	bHasHitThisSwing = false;
+
+	UE_LOG(LogTemp, Log, TEXT("ANS_DealDamage: NotifyEnd — Attacker=%s Anim=%s"),
+		(MeshComp && MeshComp->GetOwner()) ? *MeshComp->GetOwner()->GetName() : TEXT("null"),
+		Animation ? *Animation->GetName() : TEXT("null"));
 }

@@ -22,6 +22,11 @@ void UCombatComponent::ApplyDamage(float DamageAmount)
 {
 	if (bIsDead || CurrentHealth <= 0.0f) return;
 
+	// Brief grace period right after ResetForNewRound — combo hits that landed during
+	// the death→reset transition (e.g., the second hit of a 2-hit combo) would otherwise
+	// drain the freshly restored HP back to zero and trigger the death montage twice.
+	if (bIsInvulnerable) return;
+
 	CurrentHealth = FMath::Clamp(CurrentHealth - DamageAmount, 0.0f, MaxHealth);
 
 	if (CurrentHealth <= 0.0f)
@@ -49,7 +54,30 @@ void UCombatComponent::ResetForNewRound()
 	}
 
 	ResetCombo();
-	UE_LOG(LogTemp, Log, TEXT("CombatComponent: Reset for new round — health restored, combo cleared"));
+
+	// Open a brief invulnerability window so any in-flight combo damage from the
+	// previous round (notify-state hits that were already in their damage tick)
+	// can't immediately re-deplete the just-restored HP.
+	if (World && PostResetInvulnerabilityDuration > 0.0f)
+	{
+		bIsInvulnerable = true;
+		World->GetTimerManager().ClearTimer(InvulnTimerHandle);
+		World->GetTimerManager().SetTimer(
+			InvulnTimerHandle,
+			this,
+			&UCombatComponent::ClearInvulnerability,
+			PostResetInvulnerabilityDuration,
+			false
+		);
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("CombatComponent: Reset for new round — health restored, combo cleared, invuln=%.2fs"),
+		PostResetInvulnerabilityDuration);
+}
+
+void UCombatComponent::ClearInvulnerability()
+{
+	bIsInvulnerable = false;
 }
 
 // --- Combo / Montage System ---
@@ -296,27 +324,37 @@ void UCombatComponent::OpenComboWindow()
 		);
 	}
 
-	// If input was buffered, advance combo immediately
+	// If input was buffered, advance combo immediately — but only if there's a next step.
+	// Looping back to step 0 turned the combo into an infinite chain when the config had
+	// only one attack (every press kept playing Hit1 forever). Cap at combo length and
+	// let the current swing finish naturally — OnMontageEnded then applies cooldown.
 	if (bInputBuffered)
 	{
 		bInputBuffered = false;
-		bComboWindowOpen = false;
 
-		if (World)
+		const int32 NextStep = ComboStep + 1;
+		if (CombatConfig && NextStep < CombatConfig->GetComboLength())
 		{
-			World->GetTimerManager().ClearTimer(ComboWindowTimerHandle);
+			bComboWindowOpen = false;
+
+			if (World)
+			{
+				World->GetTimerManager().ClearTimer(ComboWindowTimerHandle);
+			}
+
+			ComboStep = NextStep;
+			const FAttackAnimData* NextAttack = CombatConfig->GetAttackData(ComboStep);
+			if (NextAttack && NextAttack->Montage)
+			{
+				PlayComboMontage(*NextAttack);
+			}
 		}
-
-		ComboStep++;
-		if (ComboStep >= CombatConfig->GetComboLength())
+		else
 		{
-			ComboStep = 0;
-		}
-
-		const FAttackAnimData* NextAttack = CombatConfig->GetAttackData(ComboStep);
-		if (NextAttack && NextAttack->Montage)
-		{
-			PlayComboMontage(*NextAttack);
+			UE_LOG(LogTemp, Log,
+				TEXT("CombatComponent: Combo exhausted at step %d (length %d) — chain ends, cooldown will apply"),
+				ComboStep,
+				CombatConfig ? CombatConfig->GetComboLength() : 0);
 		}
 	}
 }

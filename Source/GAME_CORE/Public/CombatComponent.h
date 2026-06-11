@@ -40,6 +40,16 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|Health")
 	bool bIsDead = false;
 
+	/** How long after ResetForNewRound() the actor cannot take damage. Must cover the full
+	 *  duration of any combo the attacker might be in the middle of when reset fires —
+	 *  otherwise the boss is killed AGAIN by the rest of the combo and the death montage
+	 *  plays a second time. 3.0s covers a typical 3-hit combo with comfortable margin. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Health")
+	float PostResetInvulnerabilityDuration = 3.0f;
+
+	UFUNCTION(BlueprintPure, Category = "Combat|Health")
+	bool IsInvulnerable() const { return bIsInvulnerable; }
+
 	/** Restore full health and clear the dead flag. Call this when starting a new round. */
 	UFUNCTION(BlueprintCallable, Category = "Combat|Health")
 	void ResetForNewRound();
@@ -151,6 +161,14 @@ private:
 	bool bInAttackCooldown = false;
 	FTimerHandle ComboWindowTimerHandle;
 	FTimerHandle CooldownTimerHandle;
+
+	// --- Post-reset invulnerability ---
+	// Set true by ResetForNewRound for PostResetInvulnerabilityDuration seconds.
+	// ApplyDamage early-outs while this is set so combo damage that's still landing
+	// during the death→reset transition can't immediately re-kill the actor.
+	bool bIsInvulnerable = false;
+	FTimerHandle InvulnTimerHandle;
+	void ClearInvulnerability();
 
 	// Tracks the active combo montage to ignore stale end-delegate callbacks
 	UPROPERTY()
