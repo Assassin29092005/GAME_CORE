@@ -8,6 +8,11 @@ import ProfileRadar from "../components/ProfileRadar.jsx";
 import EmotionTimeline from "../components/EmotionTimeline.jsx";
 import FightHistory from "../components/FightHistory.jsx";
 
+const fmtDate = (d) =>
+  new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit", month: "short", year: "numeric",
+  }).format(d).toUpperCase();
+
 export default function Dashboard() {
   const { user, demo } = useAuth();
   const [profile, setProfile] = useState(null);
@@ -36,74 +41,103 @@ export default function Dashboard() {
     return (
       <div className="boot" style={{ minHeight: "50vh" }}>
         <span className="boot-mark" />
-        DECRYPTING FILE…
+        Retrieving file…
       </div>
     );
   }
 
-  const callsign = demo ? "DEMO SUBJECT" : user?.displayName || user?.email || "UNKNOWN";
+  const callsign = demo ? "Demo subject" : user?.displayName || user?.email || "Unknown";
   const assessment = bossAssessment(profile);
   const stats = computeStats(fights);
+
+  // Earliest fight = "subject under observation since" date.
+  const earliest = fights.length
+    ? new Date(Math.min(...fights.map((f) => f.startedAt)))
+    : new Date();
 
   return (
     <>
       <div className="dossier-head reveal d1">
         <div>
-          <div className="kicker">
-            <span className="rec-dot" />
-            SUBJECT FILE // ACTIVE SURVEILLANCE
+          <div className="dossier-meta">
+            <div className="meta-field">
+              File no.
+              <b>GC—{(demo ? "DM00" : (user?.uid || "AN00").slice(0, 4)).toUpperCase()}</b>
+            </div>
+            <div className="meta-field">
+              Opened
+              <b>{fmtDate(earliest)}</b>
+            </div>
+            <div className="meta-field">
+              Engagements
+              <b>{stats.total}</b>
+            </div>
           </div>
-          <h1 className="subject-name">{callsign}</h1>
+
+          <h1 className="subject-name">
+            {callsign.split(" ").map((w, i, arr) =>
+              i === arr.length - 1 ? <em key={i}>{w}</em> : <span key={i}>{w} </span>
+            )}
+          </h1>
         </div>
+
         {assessment && (
-          <div className="threat-badge">
-            <span className="grade num">{assessment.threat}</span>
-            <span className="lbl">
-              Threat
-              <br />
-              Class
-            </span>
+          <div className="threat-block">
+            <div className="stamp" style={{ marginBottom: 14 }}>
+              Surveillance active
+            </div>
+            <div className="threat-grade num">{assessment.threat}</div>
+            <div className="threat-label">Threat<br />class</div>
           </div>
         )}
       </div>
 
       {assessment && (
-        <blockquote className="boss-quote reveal d2">
-          <span className="who">Boss assessment — generated from your behavior</span>
-          “{assessment.lines[0]} {assessment.lines[1]}”
+        <blockquote className="assessment reveal d2">
+          <div className="who">Analyst's note · written by the boss</div>
+          <p className="body">
+            {assessment.lines[0]} {assessment.lines[1]}
+          </p>
         </blockquote>
       )}
 
       <div className="grid">
-        <div className="reveal d3">
-          <StatCards stats={stats} />
+        <div className="col-stats reveal d3">
+          <Panel
+            title="Vital signs"
+            tag="§ 01 · Aggregates"
+          >
+            <StatCards stats={stats} />
+          </Panel>
         </div>
 
-        <Panel
-          title="Behavioral Signature"
-          tag="8-DIM PROFILE // EMA"
-          variant="live"
-          className="reveal d4"
-        >
-          <ProfileRadar profile={profile} />
-        </Panel>
+        <div className="col-radar reveal d4">
+          <Panel
+            title="Behavioral signature"
+            tag="§ 02 · 8-dim EMA profile"
+            variant="warm"
+          >
+            <ProfileRadar profile={profile} />
+          </Panel>
+        </div>
 
-        <Panel
-          title="Affect Telemetry"
-          tag="FRUSTRATION / FLOW / BOREDOM"
-          className="reveal d5"
-        >
-          <EmotionTimeline fights={fights} />
-        </Panel>
+        <div className="col-affect reveal d5">
+          <Panel
+            title="Affect telemetry"
+            tag="§ 03 · Frustration / Flow / Boredom"
+          >
+            <EmotionTimeline fights={fights} />
+          </Panel>
+        </div>
 
-        <Panel
-          title="Engagement Log"
-          tag={`${fights.length} RECORDS`}
-          variant="threat"
-          className="full reveal d6"
-        >
-          <FightHistory fights={fights} />
-        </Panel>
+        <div className="col-log reveal d6">
+          <Panel
+            title="Engagement log"
+            tag={`§ 04 · ${fights.length} records on file`}
+          >
+            <FightHistory fights={fights} />
+          </Panel>
+        </div>
       </div>
     </>
   );

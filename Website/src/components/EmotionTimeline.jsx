@@ -8,7 +8,8 @@ import {
   YAxis,
 } from "recharts";
 
-const COLORS = { flow: "#3dd6c3", frustration: "#ff5c38", boredom: "#8b9dc3" };
+// Ember = frustration (boss accent), verdigris = flow (analyst pen), bone-dim = boredom.
+const COLORS = { flow: "#88c0b7", frustration: "#ff6e32", boredom: "#c5bfae" };
 
 function Tip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
@@ -26,37 +27,48 @@ function Tip({ active, payload, label }) {
 
 export default function EmotionTimeline({ fights }) {
   if (!fights.length) {
-    return <div className="empty">NO TELEMETRY YET — affect data appears after your first synced fight.</div>;
+    return (
+      <div className="empty">
+        No telemetry yet. Affect data appears after the first synced fight.
+      </div>
+    );
   }
 
-  // oldest → newest, one point per fight
   const data = [...fights]
     .sort((a, b) => a.startedAt - b.startedAt)
     .map((f) => ({
-      label: new Date(f.startedAt).toLocaleDateString(undefined, {
-        month: "short",
-        day: "numeric",
-      }),
+      label: new Date(f.startedAt)
+        .toLocaleDateString(undefined, { month: "short", day: "numeric" })
+        .toUpperCase(),
       flow: f.emotion.flow,
       frustration: f.emotion.frustration,
       boredom: f.emotion.boredom,
     }));
 
   return (
-    <div style={{ width: "100%", height: 296 }}>
+    <div style={{ width: "100%", height: 280 }}>
       <ResponsiveContainer>
-        <LineChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -28 }}>
-          <CartesianGrid stroke="#16212685" vertical={false} />
+        <LineChart data={data} margin={{ top: 12, right: 12, bottom: 0, left: -20 }}>
+          <CartesianGrid stroke="rgba(35, 38, 41, 0.5)" vertical={false} />
           <XAxis
             dataKey="label"
-            tick={{ fill: "#44545b", fontSize: 9, fontFamily: "Sometype Mono" }}
+            tick={{
+              fill: "#5a5d62",
+              fontSize: 9,
+              fontFamily: "JetBrains Mono",
+              letterSpacing: "0.18em",
+            }}
             tickLine={false}
-            axisLine={{ stroke: "#1d2b31" }}
+            axisLine={{ stroke: "#232629" }}
             interval="preserveStartEnd"
           />
           <YAxis
             domain={[0, 1]}
-            tick={{ fill: "#44545b", fontSize: 9, fontFamily: "Sometype Mono" }}
+            tick={{
+              fill: "#5a5d62",
+              fontSize: 9,
+              fontFamily: "JetBrains Mono",
+            }}
             tickLine={false}
             axisLine={false}
           />
@@ -67,17 +79,35 @@ export default function EmotionTimeline({ fights }) {
               type="monotone"
               dataKey={key}
               stroke={color}
-              strokeWidth={key === "flow" ? 2.5 : 1.5}
+              strokeWidth={key === "flow" ? 2 : 1.25}
               dot={false}
               activeDot={{ r: 3, strokeWidth: 0 }}
             />
           ))}
         </LineChart>
       </ResponsiveContainer>
-      <div style={{ display: "flex", gap: 18, marginTop: 6, fontSize: 10, letterSpacing: "0.18em" }}>
+      <div
+        style={{
+          display: "flex",
+          gap: 28,
+          marginTop: 14,
+          fontFamily: "JetBrains Mono",
+          fontSize: 9,
+          letterSpacing: "0.28em",
+          textTransform: "uppercase",
+        }}
+      >
         {Object.entries(COLORS).map(([key, color]) => (
-          <span key={key} style={{ color }}>
-            ▪ {key.toUpperCase()}
+          <span key={key} style={{ color, display: "flex", alignItems: "center", gap: 8 }}>
+            <span
+              style={{
+                display: "inline-block",
+                width: 18,
+                height: 2,
+                background: color,
+              }}
+            />
+            {key}
           </span>
         ))}
       </div>

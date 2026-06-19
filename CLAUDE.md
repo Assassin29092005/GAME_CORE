@@ -56,7 +56,7 @@ A combat game where BP_NeuralHero (player) fights BP_Boss (RL-driven). C++ gamep
 1. C++ `StateObservationComponent` collects `FRLObservation` (17-dim: hero velocity, combo, attacking, HP, distance, angle, boss HP, 8-dim player profile) → JSON
 2. C++ `RLBridgeComponent` sends JSON over TCP at ~15 Hz
 3. Python `BossEnv` (gymnasium.Env) receives obs, returns `{"action": 0-4}`
-4. C++ `BossActionComponent` executes: 0=Attack, 1=Block, 2=Dodge, 3=Approach, 4=Retreat
+4. C++ `BossActionComponent` executes: 0=Attack, 1=Block, 2=Dodge, 3=Approach, 4=Retreat. Action 2 (Dodge) randomly picks between the `DodgeMontage` (fast quickstep) and `RollMontage` (slower, still-hittable roll) per fire — weighted by `RollChance` (default 0.4). The RL action space stays `Discrete(5)`; the picker happens entirely inside `DoDodge`.
 
 ### Component Layout
 
@@ -67,8 +67,10 @@ BP_Boss: CombatComponent, StateObservationComponent, RLBridgeComponent,
          EmotionEstimationComponent
 
 BP_NeuralHero: CombatComponent, CombatStateComponent, PlayerProfileComponent,
-               HitReactionComponent, HitFeedbackComponent
+               HitReactionComponent, HitFeedbackComponent, AutoHeroComponent
 ```
+
+`AutoHeroComponent` is the M1 sparring bot — disabled by default; activated by the `-AutoHero=<persona>` launch arg from `Tools/run_training.ps1` (personas: `rusher`, `turtle`, `kiter`, `counter`, `chaotic`). It drives only the public `CombatComponent` API plus Enhanced Input injection (see the Mover gotcha below); training-only behavior, never reached in shipped play.
 
 Components find each other at runtime via `FindComponentByClass` (no hard references). `StateObservationComponent` looks up `CombatComponent` on both actors, `PlayerProfileComponent` on the hero, `PlayerMemoryComponent` and `EmotionEstimationComponent` on the boss.
 
@@ -78,6 +80,7 @@ BP_NeuralHero and BP_Boss are **APawn-based Mover pawns, not `ACharacter`**. Sev
 
 - **Mesh lookup**: `CombatComponent::GetOwnerAnimInstance()` tries `ACharacter::GetMesh()` first, then falls back to `FindComponentByClass<USkeletalMeshComponent>()`. Use this pattern (or `FindComponentByClass` directly) in any new component — never assume `Cast<ACharacter>` succeeds.
 - **Input vector**: Mover consumes input through its own buffer (`IMoverInputProducerInterface`), not `APawn::AddMovementInput`. `GetLastMovementInputVector()` / `GetPendingMovementInputVector()` return zero on Mover pawns. `CombatComponent::SetMovementInput(FVector2D)` is the supported hook — the pawn BP calls it from `IA_Move Triggered`, and it transforms the value into world-space using the controller's yaw.
+- **`AddMovementInput` works on the BOSS pawn but NOT the hero pawn.** The hero is built on the Mover sandbox character whose input producer reads Enhanced Input exclusively — `APawn::AddMovementInput` silently does nothing. Bots / AI driving the hero must inject through `UEnhancedInputLocalPlayerSubsystem::InjectInputForAction(MoveAction, FInputActionValue(Vec2D), ...)`. `AutoHeroComponent::InjectMove` is the reference implementation and falls back to `AddMovementInput` when `MoveAction` isn't assigned (which keeps it working on boss-style pawns).
 - **Velocity lag**: `GetVelocity()` lags input by a frame or two because velocity is integrated by Mover *after* input is consumed. Code sampling velocity at "the instant of input" (e.g., attack-time combo selection) should prefer BP-pushed input over sampled velocity.
 - **Root motion**: Montages with root-motion flags drive Mover-integrated movement — the motion-warp target must be up to date before `Montage_Play`, which `PlayComboMontage` handles.
 
@@ -87,13 +90,34 @@ BP_NeuralHero and BP_Boss are **APawn-based Mover pawns, not `ACharacter`**. Sev
 
 - **Directional combos**: `NeutralComboConfig` / `ForwardComboConfig` / `BackwardComboConfig` / `SideComboConfig`, selected at each chain-start by `SelectComboByDirection()`. Priority: `LastMovementInput` (pushed from the pawn BP via `SetMovementInput` on `IA_Move`) → owner velocity → neutral. The BP hook is required because Mover pawns don't populate `APawn::GetLastMovementInputVector()` (see Mover gotchas above).
 - **Input buffering** within a configurable combo window (`CombatConfig->ComboWindowDuration`). Chain ENDS after `ComboLength` steps — there is no wrap-around. To support multi-hit combos, add multiple `FAttackAnimData` entries to the relevant config's `ComboChain` array; otherwise a single-entry config gives one swing per press.
-- **Attack cooldown** (`AttackCooldownDuration`) blocks `RequestAttack` after a combo ends, is interrupted, or runs out of configured steps. `ANS_DealDamage::NotifyBegin` also clears the per-swing guard so boss attacks (which bypass `PlayComboMontage`) still get fresh hits.
-- **Per-swing hit guard**: `bHitLandedThisAttack` on the attacker's `CombatComponent`. `UAnimNotifyState` instance variables proved unreliable in UE5, so `ANS_DealDamage` reads/writes this flag on the attacker rather than its own member. `MarkHitLanded()` sets it; `PlayComboMontage` and `ANS_DealDamage::NotifyBegin` clear it per swing.
+- **Attack cooldown** (`AttackCooldownDuration`) blocks `RequestAttack` after a combo ends, is interrupted, or runs out of configured steps.
+- **Per-swing hit guard**: `bHitLandedThisAttack` on the attacker's `CombatComponent`. `UAnimNotifyState` instance variables proved unreliable in UE5, so `ANS_DealDamage` reads/writes this flag on the attacker rather than its own member. The guard is cleared at TRUE swing starts only: `PlayComboMontage` (hero combos) and `BossActionComponent::DoAttack` (boss attacks, which bypass `PlayComboMontage`). **It is deliberately NOT cleared in `ANS_DealDamage::NotifyBegin`** — `HitFeedbackComponent::PauseAttackerAnim` pauses/resumes the attacker's montage on every landed hit, which re-fires `NotifyBegin` mid-swing. Clearing the guard there used to turn one swing into ~25 hits (the M0 one-click-kill bug). If you ever add a new attack-start code path, you must clear the guard there explicitly.
+- **Hit-stop + NotifyBegin**: as a corollary, never gate behavior on "NotifyBegin = new swing." Use it for setup that's safe to repeat (debug logs, trace cache init) but never for state that must fire once per swing.
 - **Death / round reset**: `ApplyDamage` sets `bIsDead` and broadcasts `OnHealthDepleted`. BPs bind this to play the death montage (boss uses `BossActionComponent::HandleDeath` + `OnBossDied`) and trigger `ResetForNewRound()` + respawn after a delay. `CombatComponent::PostResetInvulnerabilityDuration` (default 3s, BP-tunable) blocks damage briefly after reset so in-flight combo hits from the round-ending swing don't immediately re-kill and trigger the death montage twice. `BossActionComponent::ResetForNewRound` also calls `HitReactionComponent::ResetForNewRound` to clear accumulated stagger and the grace timer.
 - **Hit-reaction lockout**: `HitReactionComponent::IsReacting()` returns true while a flinch montage is playing AND for `HitReactionGracePeriod` seconds (default 0.25s) after it ends. `BossActionComponent::ExecuteActionEnum` checks this before firing any RL action, so the boss can't dodge / attack mid-combo in the gap between montage end and the next bridge action (~67ms cadence).
-- **Montage mutation caveat**: `PlayComboMontage` and `HitReactionComponent::PlayHitReaction` mutate the shared montage asset (`BlendIn`/`BlendOut` times, root-motion flags) before play. Safe ONLY if each combo step / intensity-direction pair uses a UNIQUE montage asset — sharing a montage across entries causes interleaved writes.
+- **Montage mutation caveat**: `PlayComboMontage`, `RequestDodge`, `RequestRoll`, and `HitReactionComponent::PlayHitReaction` all mutate the shared montage asset (`BlendIn`/`BlendOut` times, root-motion flags) before play. Safe ONLY if each combo step / dodge direction / roll direction / intensity-direction pair uses a UNIQUE montage asset — sharing a montage across entries OR across characters (hero + boss) causes interleaved writes. Always Ctrl+D to duplicate before assigning a hero montage to the boss or vice versa.
+
+### Player Defensive Combat (Dodge / Roll / Block)
+
+`CombatComponent` also owns the player-side defensive moves. All hold/play state lives here; the bot uses these same entry points so behavior matches a human player exactly.
+
+- **Dodge** (`RequestDodge`): fast quickstep. Four directional slots (`DodgeFront/Back/Left/Right Montage`), selected the same way `SelectComboByDirection` works — `LastMovementInput` first, no-input → backstep. Near-instant (`DodgeBlendInTime` default 0.05s). Root-motion driven. Hook IA_Dodge → Started → RequestDodge.
+- **Roll** (`RequestRoll`): slower than dodge, no i-frames by design (and will stay hittable when Phase 3.5 adds the `ANS_Invulnerable` window for dodge). Four directional slots (`RollFront/Back/Left/Right Montage`), `RollBlendInTime` 0.12s. C++ refuses to play if `LastMovementInput` is zero — roll requires movement input. The intended dispatch is: Space pressed → branch on movement → if moving call `RequestRoll`, else jump.
+- **Block** (`SetBlocking(bool)`): hold-state. `SetBlocking(true)` plays `BlockStartMontage`, then `OnBlockMontageEnded` chains into `BlockIdleMontage` repeatedly (delegate-driven loop, NOT a montage section loop, NOT notify-driven — the M0 hit-stop lesson generalizes). `SetBlocking(false)` plays `BlockEndMontage`. On a frontal hit while blocking, `ApplyDamage` reduces damage by `BlockDamageMultiplier` (default 0.25), plays `BlockHitMontage`, and **suppresses the flinch** (`ANS_DealDamage` skips `PlayHitReaction` when `IsBlockingAgainst(attacker)` returns true).
+- **AnimGraph requirement for block-while-walking**: block montages must play in an upper-body-only slot (project convention: `UpperBody.Block`) layered over the locomotion state machine via `Layered blend per bone` at the spine. If block montages stay in `DefaultGroup.DefaultSlot`, they override the legs and the hero slides when walking with block held. The fix is BP-side: create the slot in the Skeleton's Anim Slot Manager, reassign every block montage to it, then insert a Layered Blend Per Bone node before Output Pose with Branch Filter `spine_01` / Blend Depth 4.
+- **State gates**: `IsEvading()` = dodging OR rolling. `RequestAttack` refuses while evading; `RequestRoll`/`RequestDodge` refuse while already evading; `SetBlocking(true)` refuses while attacking/dodging/dead. Cancel windows arrive with guide.md Phase 3.2 — for now everything commits fully.
+- **Damage instigator**: `ApplyDamage(DamageAmount, AActor* Instigator = nullptr)`. The instigator enables both the block check above and caches `LastHitDirection` (world-space, 2D, BlueprintReadOnly) for knockback/ragdoll impulses when guide.md Phase 6.2/6.3 lands. Always pass the attacker; `ANS_DealDamage::NotifyTick` already does.
+- **Known gap (training-only)**: `BossActionComponent::DoBlock` plays the boss's `BlockMontage` and sets `bIsPerformingAction = true`, but does NOT call `SetBlocking(true)` on the boss's `CombatComponent`. The boss's RL "Block" action is therefore **visual-only — no damage reduction**. Patching is a one-liner in `DoBlock`; deferred because it doesn't block M1 training (the policy still learns when to "block" as a behavior).
 
 Motion warping positions the attacker via `UMotionWarpingComponent`; `UpdateMotionWarpTarget` sets the warp target's location/rotation toward `WarpTargetActor` at each attack start. Hit feedback uses **per-actor `CustomTimeDilation`** for hit stop (not global time dilation) so the RL bridge timer is unaffected; attacker anim is paused via `Montage_Pause`/`Montage_Resume`.
+
+### Enhanced Input setup (Pressed trigger + Started pin)
+
+One-shot combat intents (Attack, Dodge, Roll) MUST be configured both ways or they double-fire:
+- **On the `IA_*` asset**: Triggers array must contain a single `Pressed` trigger. With no trigger entry, Enhanced Input fires `Started` every frame the key is held, not once per press.
+- **In the BP**: wire the action's `Started` execution pin (NOT `Triggered`). `Triggered` fires repeatedly while held even with a Pressed trigger.
+
+Hold intents (Block, Move) are the opposite — leave Triggers empty so the default Down behavior gives `Started` on press and `Completed` on release, and wire both pins. We burned a long debug session (the "one click = full combo" symptom) before settling this — it's an easy way to lose hours.
 
 ### Observation Pipeline
 
@@ -128,7 +152,7 @@ Extensions are loosely coupled. Each can be toggled independently in `config.yam
 | Core | `boss_env.py`, `train.py`, `infer.py`, `config.yaml` |
 | Hierarchical RL | `hierarchical_env.py`, `hierarchical_policy.py`, `train_hierarchical.py` |
 | Constrained Learning | `constrained_wrapper.py` |
-| Transfer Learning | `transfer_learning.py`, `train_transfer.py`, `replay_buffer_manager.py` |
+| Transfer Learning | `transfer_learning.py`, `train_transfer.py`, `replay_buffer_manager.py`, `replay_recorder.py` |
 | IRL | `irl_player_model.py`, `irl_feature_engineering.py` |
 | World Model | `world_model.py`, `planning.py`, `train_world_model.py` |
 | MAML | `maml_policy.py`, `maml_trainer.py`, `train_maml.py`, `maml_data_utils.py` |
@@ -183,7 +207,10 @@ Enabled plugins (in `.uproject`): Mover (+ MoverExamples, MoverIntegrations), Mo
 - `guide.md` — gameplay-feel manual (9 phases, click-level editor steps).
 - `visuals.md` — rendering/lighting/art/Blender-terrain manual, budgeted for the dev laptop (RTX 4050 6 GB / 16 GB RAM).
 - `Website/` — the player dashboard ("Subject Dossier": Firebase auth, profile radar, emotion timeline, fight log, download page). React + Vite; builds clean; demo mode works without Firebase. Setup + the **canonical Firestore schema** (the contract the game's uploader must write) live in `Website/README.md`.
-- `Tools/run_training.ps1` — unattended overnight training supervisor (UE standalone + train.py, crash-restart).
+- `Tools/run_training.ps1` — unattended overnight training supervisor (UE standalone + train.py, crash-restart). Passes the persona to both sides: `-AutoHero=<persona>` to UE, `--player-id <persona>` to `train.py`, so replays land in `replays/<persona>/`.
+- `Tools/set_combo_damage.py` — editor Python script that batch-sets `DamageAmount`/`DamageType` on every entry of every `CombatAnimConfig` asset (10/15/20/25 with Heavy on the chain finisher). Run via Tools → Execute Python Script… or `py "D:\GAME_CORE\Tools\set_combo_damage.py"` from the **Cmd** console (not Python — that's a common misfire).
+- `Python/replay_recorder.py` — gymnasium wrapper that calls `ReplayBufferManager.start_episode/record_step/end_episode` during live training. The write API existed before but nothing called it; `train.py` now wraps `BossEnv` with this when `transfer.record_replays` is on (default: true), so overnight runs actually produce the `replays/<player_id>/episode_NNNN.npz` files that MAML / IRL / world-model / transfer training read.
+- `Python/train.py --player-id <name>` — CLI override for `env.player_id` so the harness can key replays per persona without editing config.yaml.
 - `Python/export_onnx.py` — SB3 checkpoint → ONNX for in-engine NNE inference, with agreement verification.
 
 ## Architecture Diagrams

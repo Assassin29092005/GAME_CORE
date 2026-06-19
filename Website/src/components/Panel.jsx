@@ -1,15 +1,12 @@
-// HUD panel with corner-bracket frame. variant: "" | "live" (teal) | "threat" (ember)
+// Editorial section block. Title, optional kicker tag, optional warm variant
+// (the radar pane uses warm — feels like ink on cream paper).
 export default function Panel({ title, tag, variant = "", className = "", children }) {
   return (
-    <section className={`panel ${variant} ${className}`}>
-      <span className="c tl" />
-      <span className="c tr" />
-      <span className="c bl" />
-      <span className="c br" />
+    <section className={`block ${variant} ${className}`}>
       {(title || tag) && (
-        <header className="panel-head">
-          <h2 className="panel-title">{title}</h2>
-          {tag && <span className="panel-tag">{tag}</span>}
+        <header className="block-head">
+          <h2 className="block-title">{title}</h2>
+          {tag && <span className="block-tag">{tag}</span>}
         </header>
       )}
       {children}
