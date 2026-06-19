@@ -3,6 +3,7 @@
 #include "GameFramework/Pawn.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "HitReactionComponent.h"
+#include "CombatComponent.h"
 
 UBossActionComponent::UBossActionComponent()
 {
@@ -148,6 +149,19 @@ void UBossActionComponent::DoAttack()
 {
 	if (AttackMontage)
 	{
+		// Fresh swing — allow one hit to land. Hero combos get this from
+		// PlayComboMontage; boss attacks bypass that path, so clear the per-swing
+		// guard here. (Previously cleared in ANS_DealDamage::NotifyBegin, but
+		// hit-stop's Montage_Pause/Resume re-fires NotifyBegin mid-swing, which
+		// re-armed the guard every pause cycle — one swing became ~25 hits.)
+		if (AActor* Owner = GetOwner())
+		{
+			if (UCombatComponent* Combat = Owner->FindComponentByClass<UCombatComponent>())
+			{
+				Combat->bHitLandedThisAttack = false;
+			}
+		}
+
 		bIsPerformingAction = true;
 		PlayMontage(AttackMontage);
 		UE_LOG(LogTemp, Log, TEXT("BossAction: Attack"));
@@ -166,11 +180,22 @@ void UBossActionComponent::DoBlock()
 
 void UBossActionComponent::DoDodge()
 {
-	if (DodgeMontage)
+	// Pick dodge or roll. Weighted by RollChance, but always fall back to
+	// whichever slot IS assigned — RL action "Dodge" must always animate
+	// SOMETHING or the policy's choice silently no-ops and training drifts.
+	UAnimMontage* Montage = nullptr;
+	const bool bWantsRoll = (FMath::FRand() < RollChance);
+	if (bWantsRoll && RollMontage) Montage = RollMontage;
+	else if (DodgeMontage)         Montage = DodgeMontage;
+	else if (RollMontage)          Montage = RollMontage;
+
+	if (Montage)
 	{
 		bIsPerformingAction = true;
-		PlayMontage(DodgeMontage);
-		UE_LOG(LogTemp, Log, TEXT("BossAction: Dodge"));
+		PlayMontage(Montage);
+		UE_LOG(LogTemp, Log, TEXT("BossAction: %s (%s)"),
+			(Montage == RollMontage) ? TEXT("Roll") : TEXT("Dodge"),
+			*Montage->GetName());
 	}
 }
 

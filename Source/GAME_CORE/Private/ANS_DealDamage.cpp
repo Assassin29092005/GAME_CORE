@@ -18,17 +18,15 @@ void UANS_DealDamage::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenc
 	Super::NotifyBegin(MeshComp, Animation, TotalDuration, EventReference);
 	bHasHitThisSwing = false;
 
-	// Reset the attacker's per-swing hit guard so this new swing can land a hit.
-	// CombatComponent::PlayComboMontage clears bHitLandedThisAttack for the hero combo path,
-	// but boss attacks (BossActionComponent::DoAttack → PlayMontage) bypass that path,
-	// so without this reset the boss would land at most ONE hit ever, then be permanently
-	// blocked. Clearing it here on every NotifyBegin makes the guard work for any attacker.
+	// Do NOT clear the attacker's per-swing hit guard here. NotifyBegin is NOT
+	// guaranteed to fire once per swing: hit-stop pauses/resumes the attacker's montage
+	// mid-window (HitFeedbackComponent::PauseAttackerAnim → Montage_Pause/Resume), and
+	// the resume re-fires NotifyBegin. Clearing the guard here re-armed damage on every
+	// pause cycle and turned one swing into ~25 hits (one-click boss kill). The guard is
+	// cleared at true swing starts instead: CombatComponent::PlayComboMontage (hero
+	// combos) and BossActionComponent::DoAttack (boss attacks, which bypass that path).
 	AActor* Attacker = MeshComp ? MeshComp->GetOwner() : nullptr;
 	UCombatComponent* AttackerCombat = Attacker ? Attacker->FindComponentByClass<UCombatComponent>() : nullptr;
-	if (AttackerCombat)
-	{
-		AttackerCombat->bHitLandedThisAttack = false;
-	}
 
 	UE_LOG(LogTemp, Log, TEXT("ANS_DealDamage: NotifyBegin — Attacker=%s Anim=%s AttackerCombat=%s"),
 		Attacker ? *Attacker->GetName() : TEXT("null"),
@@ -103,12 +101,14 @@ void UANS_DealDamage::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequence
 		AttackerCombatGuard->OnAttackLanded.Broadcast(DamageAmount, DamageType);
 	}
 
-	// Apply damage to the target's health
+	// Apply damage to the target's health (instigator enables block checks
+	// and the LastHitDirection cache for knockback/ragdoll later).
 	UCombatComponent* TargetCombat = HitActor->FindComponentByClass<UCombatComponent>();
 	const float TargetHPBefore = TargetCombat ? TargetCombat->CurrentHealth : -1.0f;
+	const bool bBlocked = TargetCombat && TargetCombat->IsBlockingAgainst(OwnerActor);
 	if (TargetCombat)
 	{
-		TargetCombat->ApplyDamage(DamageAmount);
+		TargetCombat->ApplyDamage(DamageAmount, OwnerActor);
 	}
 
 	// LOG: Every successful damage application — if you see >1 of these per NotifyBegin,
@@ -125,9 +125,10 @@ void UANS_DealDamage::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequence
 		TargetCombat ? TargetCombat->CurrentHealth : -1.0f,
 		(AttackerCombatGuard && AttackerCombatGuard->bHitLandedThisAttack) ? 1 : 0);
 
-	// Trigger hit reaction on the target
+	// Trigger hit reaction on the target — unless the hit was blocked, in which
+	// case CombatComponent already played the block-impact montage instead.
 	UHitReactionComponent* TargetHitReaction = HitActor->FindComponentByClass<UHitReactionComponent>();
-	if (TargetHitReaction)
+	if (TargetHitReaction && !bBlocked)
 	{
 		TargetHitReaction->PlayHitReaction(OwnerActor, DamageAmount, DamageType);
 	}
