@@ -31,7 +31,12 @@ public:
 	float CurrentHealth;
 
 	UFUNCTION(BlueprintCallable, Category = "Combat|Health")
-	void ApplyDamage(float DamageAmount);
+	void ApplyDamage(float DamageAmount, AActor* InstigatorActor = nullptr);
+
+	/** Direction FROM the last damaging attacker TO us (world, 2D). Cached for
+	 *  knockback/ragdoll impulses (guide.md Phase 6). Zero until first hit. */
+	UPROPERTY(BlueprintReadOnly, Category = "Combat|Health")
+	FVector LastHitDirection = FVector::ZeroVector;
 
 	UPROPERTY(BlueprintAssignable, Category = "Combat|Health")
 	FOnHealthDepleted OnHealthDepleted;
@@ -53,6 +58,102 @@ public:
 	/** Restore full health and clear the dead flag. Call this when starting a new round. */
 	UFUNCTION(BlueprintCallable, Category = "Combat|Health")
 	void ResetForNewRound();
+
+	// --- Dodge ---
+	// Directional dodge montages, selected against LastMovementInput the same
+	// way SelectComboByDirection works. No input -> backstep (DodgeBackMontage).
+	// Assign UNIQUE montage assets per character (play mutates blend/root-motion
+	// on the asset — the project-wide montage caveat).
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Dodge")
+	TObjectPtr<UAnimMontage> DodgeFrontMontage;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Dodge")
+	TObjectPtr<UAnimMontage> DodgeBackMontage;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Dodge")
+	TObjectPtr<UAnimMontage> DodgeLeftMontage;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Dodge")
+	TObjectPtr<UAnimMontage> DodgeRightMontage;
+
+	/** Near-instant by design — a dodge that cross-fades gets you hit. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Dodge", meta = (ClampMin = "0.0", ClampMax = "0.3"))
+	float DodgeBlendInTime = 0.05f;
+
+	/** Hook IA_Dodge Started -> here. Ignores attack cooldown on purpose. */
+	UFUNCTION(BlueprintCallable, Category = "Combat|Dodge")
+	void RequestDodge();
+
+	UFUNCTION(BlueprintPure, Category = "Combat|Dodge")
+	bool IsDodging() const { return bIsDodging; }
+
+	// --- Roll ---
+	// Slower than dodge, committed, NO i-frames by default — "still hittable"
+	// per the design. Plays only when there is movement input (BP enforces
+	// this via the Space-bar-vs-jump dispatch; we also gate in C++ so a misfire
+	// from BP can't trigger a standing roll).
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Roll")
+	TObjectPtr<UAnimMontage> RollFrontMontage;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Roll")
+	TObjectPtr<UAnimMontage> RollBackMontage;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Roll")
+	TObjectPtr<UAnimMontage> RollLeftMontage;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Roll")
+	TObjectPtr<UAnimMontage> RollRightMontage;
+
+	/** Slightly slower fade-in than dodge so the silhouette change reads. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Roll", meta = (ClampMin = "0.0", ClampMax = "0.3"))
+	float RollBlendInTime = 0.12f;
+
+	/** Hook IA_SpaceBar Started -> branch on movement input -> here (jump otherwise). */
+	UFUNCTION(BlueprintCallable, Category = "Combat|Roll")
+	void RequestRoll();
+
+	UFUNCTION(BlueprintPure, Category = "Combat|Roll")
+	bool IsRolling() const { return bIsRolling; }
+
+	/** True while either evade montage is playing — what RequestAttack should
+	 *  gate on, what cancel-window logic will look at later. */
+	UFUNCTION(BlueprintPure, Category = "Combat")
+	bool IsEvading() const { return bIsDodging || bIsRolling; }
+
+	// --- Block ---
+	// Hold-state: SetBlocking(true) plays BlockStart, then chains BlockIdle
+	// repeatedly until released (deliberate replay via end-delegate — NOT a
+	// montage section loop). Blocked hits play BlockHit and skip the flinch.
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Block")
+	TObjectPtr<UAnimMontage> BlockStartMontage;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Block")
+	TObjectPtr<UAnimMontage> BlockIdleMontage;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Block")
+	TObjectPtr<UAnimMontage> BlockHitMontage;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Block")
+	TObjectPtr<UAnimMontage> BlockEndMontage;
+
+	/** Fraction of damage that gets through a frontal block. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Block", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float BlockDamageMultiplier = 0.25f;
+
+	/** Hook IA_Block Started -> true, Completed -> false. */
+	UFUNCTION(BlueprintCallable, Category = "Combat|Block")
+	void SetBlocking(bool bNewBlocking);
+
+	UFUNCTION(BlueprintPure, Category = "Combat|Block")
+	bool IsBlocking() const { return bIsBlocking; }
+
+	/** True when blocking AND the attacker is within the frontal arc.
+	 *  ANS_DealDamage uses this to suppress the flinch on blocked hits. */
+	UFUNCTION(BlueprintPure, Category = "Combat|Block")
+	bool IsBlockingAgainst(const AActor* Attacker) const;
 
 	// --- Combo / Montage System ---
 
@@ -177,4 +278,33 @@ private:
 	void OpenComboWindow();
 	void CloseComboWindow();
 	void UpdateMotionWarpTarget();
+
+	// --- Dodge / Roll / Block internals ---
+	bool bIsDodging = false;
+	bool bIsRolling = false;
+	bool bIsBlocking = false;
+
+	// Track active montages so stale end-delegate callbacks are ignored
+	// (same pattern as CurrentComboMontage / CurrentReactionMontage).
+	UPROPERTY()
+	TObjectPtr<UAnimMontage> CurrentDodgeMontage;
+
+	UPROPERTY()
+	TObjectPtr<UAnimMontage> CurrentRollMontage;
+
+	UPROPERTY()
+	TObjectPtr<UAnimMontage> CurrentBlockMontage;
+
+	UAnimMontage* SelectDodgeMontage() const;
+	UAnimMontage* SelectRollMontage() const;
+	void PlayBlockMontage(UAnimMontage* Montage);
+
+	UFUNCTION()
+	void OnDodgeMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+
+	UFUNCTION()
+	void OnRollMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+
+	UFUNCTION()
+	void OnBlockMontageEnded(UAnimMontage* Montage, bool bInterrupted);
 };

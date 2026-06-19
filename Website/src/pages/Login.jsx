@@ -3,11 +3,16 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../useAuth.jsx";
 
 const ERRORS = {
-  "auth/invalid-credential": "Credentials rejected. Check email and password.",
-  "auth/email-already-in-use": "That email is already enlisted. Sign in instead.",
-  "auth/weak-password": "Password too weak — 6 characters minimum.",
+  "auth/invalid-credential": "Credentials rejected. Re-enter and try once more.",
+  "auth/email-already-in-use": "A file already exists under that address.",
+  "auth/weak-password": "Password too brief — six characters minimum.",
   "auth/invalid-email": "That doesn't parse as an email address.",
 };
+
+// Today's date — used as the "OPENED" file-metadata stamp.
+const fileDate = new Intl.DateTimeFormat("en-GB", {
+  day: "2-digit", month: "short", year: "numeric",
+}).format(new Date()).toUpperCase();
 
 export default function Login() {
   const { signIn, signUp, enterDemo, isConfigured } = useAuth();
@@ -43,25 +48,63 @@ export default function Login() {
   return (
     <div className="login">
       <div className="atmos" aria-hidden="true" />
-      <div className="scanlines" aria-hidden="true" />
+      <aside className="page-margin" aria-hidden="true">
+        <span className="file-no">FILE GC-OPEN · DOSSIER GC</span>
+      </aside>
 
-      <div className="login-brand">
-        <div className="rings" aria-hidden="true" />
-        <div className="reveal d1">
-          <div className="kicker">// SUBJECT DOSSIER TERMINAL</div>
-          <h1 className="login-title">
-            GAME<em>_</em>CORE
+      <section className="login-brief">
+        <div className="login-brief-meta reveal d1">
+          <div className="field-meta">
+            File no.
+            <b>GC—∅001</b>
+          </div>
+          <div className="field-meta">
+            Subject type
+            <b>Adaptive analyst</b>
+          </div>
+          <div className="field-meta">
+            Opened
+            <b>{fileDate}</b>
+          </div>
+        </div>
+
+        <div>
+          <div className="kicker reveal d2" style={{ marginBottom: 18 }}>
+            § Subject dossier · access terminal
+          </div>
+          <h1 className="login-title reveal d2">
+            The boss<br />
+            <em>kept a file</em><br />
+            on you.
           </h1>
-          <p className="login-tag">
-            You fought it. It was <b>paying attention</b>. Every dodge, every
-            combo, every habit — filed, scored, and used against you. Sign in
-            to read what the boss knows.
+          <p className="login-tag reveal d3">
+            Every dodge. Every combo. Every habit you didn't know you had. Filed,
+            scored, and read back to you. Sign in to <b>open the file</b>.
           </p>
         </div>
-      </div>
 
-      <div className="login-form-side">
-        <div className="login-card reveal d2">
+        <div className="login-stamp-wrap reveal d4">
+          <span className="stamp">Classified — Subject only</span>
+          <div className="login-stamp-meta">
+            Reference: GAME_CORE / RL-BOSS-PROJECT<br />
+            Cleared for: SUBJECT &amp; ANALYST
+          </div>
+        </div>
+      </section>
+
+      <section className="login-form-side">
+        <div className="login-card reveal d3">
+          <header className="login-card-head">
+            <div className="kicker">§ {mode === "signin" ? "Sign-in" : "Enlistment"}</div>
+            <h2>
+              {mode === "signin" ? (
+                <>Open the <em>file</em>.</>
+              ) : (
+                <>Open a <em>new file</em>.</>
+              )}
+            </h2>
+          </header>
+
           <div className="tabs">
             <button
               type="button"
@@ -89,7 +132,7 @@ export default function Login() {
                   id="callsign"
                   value={callsign}
                   onChange={(e) => setCallsign(e.target.value)}
-                  placeholder="How the dossier names you"
+                  placeholder="how the dossier names you"
                   maxLength={24}
                 />
               </div>
@@ -124,19 +167,20 @@ export default function Login() {
           </form>
 
           <div className="login-alt">
-            <button className="btn ghost" type="button" onClick={demo} style={{ width: "100%" }}>
+            <span>or, without credentials —</span>
+            <button className="btn ghost small" type="button" onClick={demo}>
               View demo file
             </button>
           </div>
 
           {!isConfigured && (
             <p className="login-note">
-              Backend not configured yet — paste your Firebase config into
+              Backend not configured — paste your Firebase config into
               src/firebase.js to enable accounts. Demo mode works now.
             </p>
           )}
         </div>
-      </div>
+      </section>
     </div>
   );
 }

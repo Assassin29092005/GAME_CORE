@@ -6,34 +6,39 @@ export default function Layout() {
   const navigate = useNavigate();
 
   const callsign = demo
-    ? "DEMO SUBJECT"
-    : user?.displayName || user?.email || "UNKNOWN";
+    ? "Demo subject"
+    : user?.displayName || user?.email || "Unknown";
 
   const onSignOut = async () => {
     await signOutUser();
     navigate("/login", { replace: true });
   };
 
+  // Synthetic file number — stable per-session, reads as archival metadata.
+  const fileNo = "GC-" + (demo ? "DM" : (user?.uid || "AN").slice(0, 4)).toUpperCase();
+
   return (
     <>
       <div className="atmos" aria-hidden="true" />
-      <div className="scanlines" aria-hidden="true" />
+      <aside className="page-margin" aria-hidden="true">
+        <span className="file-no">FILE {fileNo} · DOSSIER GC</span>
+      </aside>
 
       {demo && (
         <div className="demo-strip">
-          Demo file — sample data. Connect Firebase to see real telemetry.
+          Demo file — sample data. Connect Firebase to load real telemetry.
         </div>
       )}
 
       <header className="topbar">
         <div className="brand">
-          <span className="brand-mark" />
+          <span className="brand-mark" aria-hidden="true" />
           <div>
             <div className="brand-name">
-              GAME<em>_</em>CORE
+              GAME<em>·</em>CORE
             </div>
-            <div className="brand-sub">Adaptive Opponent Intelligence</div>
           </div>
+          <div className="brand-sub">Adaptive Opponent Intelligence</div>
         </div>
 
         <nav className="nav">
@@ -47,7 +52,7 @@ export default function Layout() {
 
         <div className="topbar-right">
           <span className="callsign">
-            SUBJECT: <b>{callsign}</b>
+            Subject — <b>{callsign}</b>
           </span>
           <button className="btn ghost small" onClick={onSignOut}>
             Sign out
@@ -60,7 +65,7 @@ export default function Layout() {
       </main>
 
       <footer className="footer">
-        <span>GAME_CORE // reinforcement-learning boss project</span>
+        <span>GAME_CORE — Reinforcement-learning boss project</span>
         <span>It watches. It learns. It remembers.</span>
       </footer>
     </>

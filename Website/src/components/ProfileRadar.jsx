@@ -8,12 +8,12 @@ import {
 } from "recharts";
 import { DIMENSIONS } from "../bossAssessment.js";
 
+// Ink-on-paper radar: the verdigris pen stroke against the warm card.
 export default function ProfileRadar({ profile }) {
   if (!profile) {
     return (
       <div className="empty">
-        NO PROFILE ON RECORD — play while signed in and the boss will start
-        taking notes.
+        No profile on record. Sign in and the boss starts taking notes.
       </div>
     );
   }
@@ -26,21 +26,26 @@ export default function ProfileRadar({ profile }) {
 
   return (
     <>
-      <div style={{ width: "100%", height: 260 }}>
+      <div style={{ width: "100%", height: 320 }}>
         <ResponsiveContainer>
           <RadarChart data={data} outerRadius="78%">
-            <PolarGrid stroke="#1d2b31" />
+            <PolarGrid stroke="rgba(106, 152, 146, 0.18)" strokeDasharray="2 4" />
             <PolarAngleAxis
               dataKey="code"
-              tick={{ fill: "#6e8087", fontSize: 10, fontFamily: "Sometype Mono" }}
+              tick={{
+                fill: "#7a7c82",
+                fontSize: 10,
+                fontFamily: "JetBrains Mono",
+                letterSpacing: "0.16em",
+              }}
             />
             <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />
             <Radar
               dataKey="value"
-              stroke="#3dd6c3"
-              strokeWidth={2}
-              fill="#3dd6c3"
-              fillOpacity={0.22}
+              stroke="#6a9892"
+              strokeWidth={1.5}
+              fill="#6a9892"
+              fillOpacity={0.18}
               isAnimationActive
             />
           </RadarChart>

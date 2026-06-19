@@ -71,7 +71,7 @@ transfer:
   fine_tune_lr: 0.0001
   fine_tune_steps_per_episode: 50000
   min_episodes_for_base: 5
-  record_replays: false          # set to true to record replay data
+  record_replays: true           # write replays/{player_id}/episode_NNNN.npz during train.py runs
 
 # --- Extension 8: Inverse RL Player Modeling ---
 irl:

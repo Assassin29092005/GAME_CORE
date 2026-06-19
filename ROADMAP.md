@@ -107,6 +107,23 @@ anims both sides, and a clean infer.py round-trip.
 **Done when:** an 8-hour unattended run survives (auto-restarts count), and
 TensorBoard shows learning curves you didn't babysit.
 
+**Status (2026-06-12): code complete and compiled.** `AutoHeroComponent` (5 personas:
+rusher / turtle / kiter / counter / chaotic; `-AutoHero=` launch arg; drives only the
+public combat API), `train.py --player-id` override, `replay_recorder.py` (the replay
+write path existed but was never called — now wired into train.py behind
+`transfer.record_replays`, which is flipped on), and the harness passes the persona to
+both UE and Python. Remaining: add the component to BP_NeuralHero (Add Component →
+Auto Hero), PIE smoke test with bEnabled ticked, then the first overnight run.
+
+**Update (2026-06-12, second pass):** bot movement fixed (Enhanced Input injection via
+`MoveAction` — the hero's Mover input producer ignores `AddMovementInput`; ASSIGN IA_Move
+on the AutoHero component). Hero **dodge** (directional, root-motion, `RequestDodge`) and
+**block** (Start→Idle-hold→Hit→End montage chain, frontal damage reduction,
+`SetBlocking`) added to CombatComponent — this pre-completes the playback halves of
+guide.md 1.3 and 3.5 (i-frames, parry, and cancel windows still pending there). Bot evades
+now use the real dodge. `Tools/set_combo_damage.py` (editor Python) sets the 10/15/25
+Light/Heavy scheme across all CombatAnimConfig assets.
+
 ## M2 — Gameplay feel *(2–4 weeks, interleaved · guide.md is the manual)*
 
 Work guide.md's **"Suggested order of attack"** table exactly as written:

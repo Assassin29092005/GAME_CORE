@@ -57,6 +57,18 @@ def make_env(cfg: dict) -> Monitor:
     )
     env._max_steps = env_cfg.get("max_steps", 2000)
 
+    # Record replays per player_id (persona) for MAML / IRL / world-model /
+    # transfer training. Innermost wrapper on purpose: raw rewards, and the
+    # action recorded is the one actually executed.
+    transfer_cfg = cfg.get("transfer", {})
+    if transfer_cfg.get("record_replays", False):
+        from replay_recorder import ReplayRecorder
+
+        replay_dir = transfer_cfg.get("replay_dir", "./replays")
+        player_id = env_cfg.get("player_id", "training")
+        env = ReplayRecorder(env, replay_dir=replay_dir, player_id=player_id)
+        print(f"Replay recording enabled -> {replay_dir}/{player_id}/")
+
     # Wrap with constrained learning if enabled
     constraints_cfg = cfg.get("constraints", {})
     if constraints_cfg.get("enabled", False):
@@ -145,7 +157,17 @@ def train(cfg: dict):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train Boss RL Agent")
     parser.add_argument("--config", type=str, default="config.yaml", help="Path to config file")
+    parser.add_argument(
+        "--player-id",
+        type=str,
+        default=None,
+        help="Override env.player_id (e.g. an AutoHero persona name) so replay/"
+             "transfer data is keyed per persona: replays/<player_id>/",
+    )
     args = parser.parse_args()
 
     cfg = load_config(args.config)
+    if args.player_id:
+        cfg["env"]["player_id"] = args.player_id
+        print(f"player_id overridden to '{args.player_id}'")
     train(cfg)

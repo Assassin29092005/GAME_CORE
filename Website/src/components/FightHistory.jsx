@@ -1,10 +1,12 @@
 const fmtDate = (ms) =>
-  new Date(ms).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  new Date(ms)
+    .toLocaleString(undefined, {
+      month: "short",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    })
+    .toUpperCase();
 
 const fmtDuration = (s) => {
   const m = Math.floor(s / 60);
@@ -14,9 +16,9 @@ const fmtDuration = (s) => {
 
 const dominant = (e) => {
   const entries = [
-    ["FLOW", e.flow],
-    ["FRUSTRATION", e.frustration],
-    ["BOREDOM", e.boredom],
+    ["Flow", e.flow],
+    ["Frustration", e.frustration],
+    ["Boredom", e.boredom],
   ];
   return entries.sort((a, b) => b[1] - a[1])[0][0];
 };
@@ -25,7 +27,7 @@ export default function FightHistory({ fights }) {
   if (!fights.length) {
     return (
       <div className="empty">
-        NO ENGAGEMENTS ON RECORD — fight while online (or sync later) and every
+        No engagements on record. Fight while online (or sync later) and every
         round is filed here.
       </div>
     );
@@ -36,13 +38,13 @@ export default function FightHistory({ fights }) {
       <table className="log-table">
         <thead>
           <tr>
-            <th>#</th>
+            <th>№</th>
             <th>Logged</th>
             <th>Opponent</th>
             <th>Outcome</th>
             <th>Duration</th>
-            <th>Boss HP left</th>
-            <th>Your HP left</th>
+            <th>Boss HP</th>
+            <th>Your HP</th>
             <th>Dominant affect</th>
           </tr>
         </thead>
@@ -51,20 +53,20 @@ export default function FightHistory({ fights }) {
             <tr key={f.id}>
               <td className="num">{String(fights.length - i).padStart(3, "0")}</td>
               <td className="num">{fmtDate(f.startedAt)}</td>
-              <td>
-                <span className={`chip ${f.encounterType}`}>
-                  {f.encounterType === "boss" ? "BOSS" : "PATROL"}
-                </span>
+              <td className="opp-cell">
+                {f.encounterType === "boss" ? "The boss" : "Patrol"}
               </td>
               <td>
                 <span className={`chip ${f.outcome}`}>
-                  {f.outcome === "win" ? "VICTORY" : "DEFEAT"}
+                  {f.outcome === "win" ? "Victory" : "Defeat"}
                 </span>
               </td>
               <td className="num">{fmtDuration(f.durationSeconds)}</td>
               <td className="num">{Math.round(f.bossHpAtEnd)}</td>
               <td className="num">{Math.round(f.heroHpAtEnd)}</td>
-              <td>{dominant(f.emotion)}</td>
+              <td className="opp-cell" style={{ fontSize: 13 }}>
+                {dominant(f.emotion)}
+              </td>
             </tr>
           ))}
         </tbody>

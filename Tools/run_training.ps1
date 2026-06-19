@@ -71,7 +71,11 @@ try {
         }
 
         $pyLog = Join-Path $LogDir "train_$stamp.log"
-        $py = Start-Process -FilePath $Python -ArgumentList $TrainScript -WorkingDirectory $PyDir `
+        # Persona doubles as the synthetic player_id so replays/<persona>/ stays
+        # separated per play-style (MAML/transfer task splits key off the folder).
+        $pyArgs = @($TrainScript)
+        if ($Persona -ne "") { $pyArgs += @("--player-id", $Persona) }
+        $py = Start-Process -FilePath $Python -ArgumentList $pyArgs -WorkingDirectory $PyDir `
             -RedirectStandardOutput $pyLog -RedirectStandardError (Join-Path $LogDir "train_$stamp.err.log") -PassThru -NoNewWindow
         Write-Host ("[{0}] Trainer pid {1} — log: {2}" -f (Get-Date -Format T), $py.Id, $pyLog)
 
