@@ -85,13 +85,11 @@ void UCombatComponent::ResetForNewRound()
 
 	ResetCombo();
 
-	// Clear dodge/roll/block state so an interrupted evade or a held guard
-	// from the previous round can't leak into the new one.
+	// Clear dodge/block state so an interrupted dodge or a held guard from
+	// the previous round can't leak into the new one.
 	bIsDodging = false;
-	bIsRolling = false;
 	bIsBlocking = false;
 	CurrentDodgeMontage = nullptr;
-	CurrentRollMontage = nullptr;
 	CurrentBlockMontage = nullptr;
 
 	// Open a brief invulnerability window so any in-flight combo damage from the
@@ -259,7 +257,7 @@ void UCombatComponent::ClearCooldown()
 void UCombatComponent::RequestAttack()
 {
 	if (bIsDead) return;
-	if (bIsDodging || bIsRolling) return;  // committed to an evade; cancel windows arrive in guide.md 3.2
+	if (bIsDodging) return;       // commit to the dodge; cancel windows arrive in guide.md 3.2
 	if (bInAttackCooldown) return;
 
 	// Attacking lowers the guard automatically.
@@ -485,7 +483,7 @@ UAnimMontage* UCombatComponent::SelectDodgeMontage() const
 
 void UCombatComponent::RequestDodge()
 {
-	if (bIsDead || bIsDodging || bIsRolling) return;
+	if (bIsDead || bIsDodging) return;
 	if (bIsAttacking) return;     // dodge-cancel arrives with guide.md 3.2 cancel windows
 	// NOTE: deliberately NOT gated on bInAttackCooldown — cooldown gates attacks, never escapes.
 
@@ -495,7 +493,7 @@ void UCombatComponent::RequestDodge()
 	UAnimInstance* AnimInstance = GetOwnerAnimInstance();
 	if (!AnimInstance) return;
 
-	// Rolling drops the guard.
+	// Dodging drops the guard.
 	if (bIsBlocking)
 	{
 		SetBlocking(false);
@@ -526,80 +524,6 @@ void UCombatComponent::OnDodgeMontageEnded(UAnimMontage* Montage, bool bInterrup
 	if (Montage != CurrentDodgeMontage) return;
 	bIsDodging = false;
 	CurrentDodgeMontage = nullptr;
-}
-
-// --- Roll ---
-// Same selection logic as dodge; different montage set, different blend, and
-// requires movement input (the SPACEBAR-while-moving contract).
-
-UAnimMontage* UCombatComponent::SelectRollMontage() const
-{
-	AActor* Owner = GetOwner();
-	if (!Owner) return nullptr;
-
-	// Defensive: this should never fire (BP gates first), but keeps the
-	// invariant explicit — no idle-roll, ever.
-	if (LastMovementInput.IsNearlyZero(0.1f))
-	{
-		return nullptr;
-	}
-
-	const float ForwardDot = FVector::DotProduct(Owner->GetActorForwardVector(), LastMovementInput);
-	const float RightDot   = FVector::DotProduct(Owner->GetActorRightVector(),   LastMovementInput);
-
-	if (FMath::Abs(ForwardDot) >= FMath::Abs(RightDot))
-	{
-		return ForwardDot >= 0.0f ? RollFrontMontage : RollBackMontage;
-	}
-	return RightDot >= 0.0f ? RollRightMontage : RollLeftMontage;
-}
-
-void UCombatComponent::RequestRoll()
-{
-	if (bIsDead || bIsDodging || bIsRolling) return;
-	if (bIsAttacking) return;
-	// NOT gated on bInAttackCooldown — same reasoning as dodge.
-
-	UAnimMontage* Montage = SelectRollMontage();
-	if (!Montage)
-	{
-		// No movement, or no montage assigned for this direction — silent no-op.
-		return;
-	}
-
-	UAnimInstance* AnimInstance = GetOwnerAnimInstance();
-	if (!AnimInstance) return;
-
-	// Rolling drops the guard.
-	if (bIsBlocking)
-	{
-		SetBlocking(false);
-	}
-
-	// Root motion ON so Mover integrates the larger displacement of a roll.
-	Montage->BlendIn.SetBlendTime(RollBlendInTime);
-	Montage->BlendOut.SetBlendTime(0.2f);
-	Montage->bEnableRootMotionTranslation = true;
-	Montage->bEnableRootMotionRotation = true;
-
-	if (AnimInstance->Montage_Play(Montage, 1.0f) > 0.0f)
-	{
-		bIsRolling = true;
-		CurrentRollMontage = Montage;
-
-		FOnMontageEnded EndDelegate;
-		EndDelegate.BindUObject(this, &UCombatComponent::OnRollMontageEnded);
-		AnimInstance->Montage_SetEndDelegate(EndDelegate, Montage);
-
-		UE_LOG(LogTemp, Log, TEXT("CombatComponent: Roll (%s)"), *Montage->GetName());
-	}
-}
-
-void UCombatComponent::OnRollMontageEnded(UAnimMontage* Montage, bool bInterrupted)
-{
-	if (Montage != CurrentRollMontage) return;
-	bIsRolling = false;
-	CurrentRollMontage = nullptr;
 }
 
 // --- Block ---

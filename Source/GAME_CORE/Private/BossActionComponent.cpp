@@ -180,22 +180,11 @@ void UBossActionComponent::DoBlock()
 
 void UBossActionComponent::DoDodge()
 {
-	// Pick dodge or roll. Weighted by RollChance, but always fall back to
-	// whichever slot IS assigned — RL action "Dodge" must always animate
-	// SOMETHING or the policy's choice silently no-ops and training drifts.
-	UAnimMontage* Montage = nullptr;
-	const bool bWantsRoll = (FMath::FRand() < RollChance);
-	if (bWantsRoll && RollMontage) Montage = RollMontage;
-	else if (DodgeMontage)         Montage = DodgeMontage;
-	else if (RollMontage)          Montage = RollMontage;
-
-	if (Montage)
+	if (DodgeMontage)
 	{
 		bIsPerformingAction = true;
-		PlayMontage(Montage);
-		UE_LOG(LogTemp, Log, TEXT("BossAction: %s (%s)"),
-			(Montage == RollMontage) ? TEXT("Roll") : TEXT("Dodge"),
-			*Montage->GetName());
+		PlayMontage(DodgeMontage);
+		UE_LOG(LogTemp, Log, TEXT("BossAction: Dodge"));
 	}
 }
 

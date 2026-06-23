@@ -36,12 +36,6 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossAction|Montages")
 	TObjectPtr<UAnimMontage> DodgeMontage;
 
-	/** Slower than DodgeMontage. The RL agent only emits "Dodge" — DoDodge
-	 *  randomly picks Dodge vs Roll per fire (weighted by RollChance) so the
-	 *  action space stays Discrete(5) and trained checkpoints stay compatible. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossAction|Montages")
-	TObjectPtr<UAnimMontage> RollMontage;
-
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BossAction|Montages")
 	TObjectPtr<UAnimMontage> DeathMontage;
 
@@ -54,12 +48,6 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BossAction|Movement")
 	float MoveDuration = 0.5f;
-
-	/** Probability that EBossAction::Dodge plays RollMontage instead of DodgeMontage.
-	 *  0 = always dodge, 1 = always roll. Both slots must be assigned for this
-	 *  to matter; an unassigned slot falls back to the other. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BossAction|Movement", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float RollChance = 0.4f;
 
 	/** How fast the boss rotates to face the hero (degrees/sec interpolation speed). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BossAction|Movement")

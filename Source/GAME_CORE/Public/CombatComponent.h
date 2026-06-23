@@ -88,40 +88,6 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Combat|Dodge")
 	bool IsDodging() const { return bIsDodging; }
 
-	// --- Roll ---
-	// Slower than dodge, committed, NO i-frames by default — "still hittable"
-	// per the design. Plays only when there is movement input (BP enforces
-	// this via the Space-bar-vs-jump dispatch; we also gate in C++ so a misfire
-	// from BP can't trigger a standing roll).
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Roll")
-	TObjectPtr<UAnimMontage> RollFrontMontage;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Roll")
-	TObjectPtr<UAnimMontage> RollBackMontage;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Roll")
-	TObjectPtr<UAnimMontage> RollLeftMontage;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Roll")
-	TObjectPtr<UAnimMontage> RollRightMontage;
-
-	/** Slightly slower fade-in than dodge so the silhouette change reads. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Roll", meta = (ClampMin = "0.0", ClampMax = "0.3"))
-	float RollBlendInTime = 0.12f;
-
-	/** Hook IA_SpaceBar Started -> branch on movement input -> here (jump otherwise). */
-	UFUNCTION(BlueprintCallable, Category = "Combat|Roll")
-	void RequestRoll();
-
-	UFUNCTION(BlueprintPure, Category = "Combat|Roll")
-	bool IsRolling() const { return bIsRolling; }
-
-	/** True while either evade montage is playing — what RequestAttack should
-	 *  gate on, what cancel-window logic will look at later. */
-	UFUNCTION(BlueprintPure, Category = "Combat")
-	bool IsEvading() const { return bIsDodging || bIsRolling; }
-
 	// --- Block ---
 	// Hold-state: SetBlocking(true) plays BlockStart, then chains BlockIdle
 	// repeatedly until released (deliberate replay via end-delegate — NOT a
@@ -279,9 +245,8 @@ private:
 	void CloseComboWindow();
 	void UpdateMotionWarpTarget();
 
-	// --- Dodge / Roll / Block internals ---
+	// --- Dodge / Block internals ---
 	bool bIsDodging = false;
-	bool bIsRolling = false;
 	bool bIsBlocking = false;
 
 	// Track active montages so stale end-delegate callbacks are ignored
@@ -290,20 +255,13 @@ private:
 	TObjectPtr<UAnimMontage> CurrentDodgeMontage;
 
 	UPROPERTY()
-	TObjectPtr<UAnimMontage> CurrentRollMontage;
-
-	UPROPERTY()
 	TObjectPtr<UAnimMontage> CurrentBlockMontage;
 
 	UAnimMontage* SelectDodgeMontage() const;
-	UAnimMontage* SelectRollMontage() const;
 	void PlayBlockMontage(UAnimMontage* Montage);
 
 	UFUNCTION()
 	void OnDodgeMontageEnded(UAnimMontage* Montage, bool bInterrupted);
-
-	UFUNCTION()
-	void OnRollMontageEnded(UAnimMontage* Montage, bool bInterrupted);
 
 	UFUNCTION()
 	void OnBlockMontageEnded(UAnimMontage* Montage, bool bInterrupted);
