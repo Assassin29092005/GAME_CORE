@@ -1,12 +1,12 @@
 # GAME_CORE
 
-> An Unreal Engine 5.7 combat game featuring a **fully adaptive, RL-driven boss AI** — a boss that learns how you fight, remembers you across encounters, and evolves its strategy to counter yours.
+> An Unreal Engine 5.8 combat game featuring a **fully adaptive, RL-driven boss AI** — a boss that learns how you fight, remembers you across encounters, and evolves its strategy to counter yours.
 
 ---
 
 ## Overview
 
-GAME_CORE is a C++ / Python hybrid project built in Unreal Engine 5.7. The player (`BP_NeuralHero`) fights a boss (`BP_Boss`) whose behavior is driven by a live Python reinforcement learning agent. The boss doesn't just scale difficulty — it genuinely learns your playstyle, models your intentions, and plans ahead.
+GAME_CORE is a C++ / Python hybrid project built in Unreal Engine 5.8. The player (`BP_NeuralHero`) fights a boss (`BP_Boss`) whose behavior is driven by a live Python reinforcement learning agent. The boss doesn't just scale difficulty — it genuinely learns your playstyle, models your intentions, and plans ahead.
 
 The architecture combines **7 pluggable AI extensions**: hierarchical strategy selection, inverse reinforcement learning, world-model planning, MAML meta-learning, transfer learning per player, emotion-aware constraints, and cross-encounter memory — each independently toggleable from a single config file.
 
@@ -16,7 +16,7 @@ The architecture combines **7 pluggable AI extensions**: hierarchical strategy s
 
 | Requirement | Version |
 |---|---|
-| Unreal Engine | 5.7 (source or launcher) |
+| Unreal Engine | 5.8 (source or launcher) |
 | Python | 3.10+ |
 | Git LFS | Required for `.uasset`, `.umap`, `.uexp` |
 
@@ -33,7 +33,7 @@ git lfs install   # before cloning
 Build via Visual Studio / Rider using `GAME_CORE.sln`, or from the command line:
 
 ```bash
-UnrealBuildTool GAME_CORE Win64 Development "D:\GAME_CORE\GAME_CORE.uproject"
+UnrealBuildTool GAME_CORE Win64 Development "D:\GAME_CORE 5.8\GAME_CORE.uproject"
 ```
 
 ### Python RL Agent

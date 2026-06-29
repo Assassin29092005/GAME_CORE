@@ -4,7 +4,7 @@ ROADMAP.md milestone M5. The exported network maps a float32 observation vector
 (the same one StateObservationComponent builds) to 5 action logits — take the
 argmax in C++ to get the EBossAction index. Deterministic, no Python at runtime.
 
-Usage (from D:\\GAME_CORE\\Python, venv active or via venv\\Scripts\\python.exe):
+Usage (from D:\\GAME_CORE 5.8\\Python, venv active or via venv\\Scripts\\python.exe):
     python export_onnx.py --model checkpoints/boss_rl_2048_steps.zip
     python export_onnx.py --model models/final.zip --out boss_policy.onnx
 

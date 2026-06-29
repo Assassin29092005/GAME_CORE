@@ -9,7 +9,7 @@ skinparam groupInheritance 2
 skinparam nodesep 60
 skinparam ranksep 40
 
-title **GAME_CORE — Complete System Architecture**\n<i>UE5.7 C++ + Python RL Combat Boss AI</i>\n<i>Extensions 7-10: MAML, IRL, World Model, Emotion</i>
+title **GAME_CORE — Complete System Architecture**\n<i>UE5.8 C++ + Python RL Combat Boss AI</i>\n<i>Extensions 7-10: MAML, IRL, World Model, Emotion</i>
 
 ' ============================================================================
 ' ENUMS

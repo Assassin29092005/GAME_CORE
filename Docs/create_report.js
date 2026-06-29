@@ -229,7 +229,7 @@ const doc = new Document({
           alignment: AlignmentType.CENTER,
           spacing: { after: 80 },
           children: [new TextRun({
-            text: "Technology Stack:  Unreal Engine 5.7  |  C++  |  Python  |  PyTorch  |  Stable Baselines3",
+            text: "Technology Stack:  Unreal Engine 5.8  |  C++  |  Python  |  PyTorch  |  Stable Baselines3",
             font: "Calibri", size: 20, color: LIGHT,
           })],
         }),
@@ -274,7 +274,7 @@ const doc = new Document({
         tealRule(),
 
         heading("1.1 What Is GAME_CORE?", HeadingLevel.HEADING_2),
-        para("GAME_CORE is a real-time action combat game built in Unreal Engine 5.7 where a boss character (BP_Boss) learns and adapts to each player\u2019s unique fighting style through deep reinforcement learning. Instead of hand-scripted enemy patterns, the boss uses a portfolio of 9 layered ML techniques to deliver dynamically challenging and engaging fights."),
+        para("GAME_CORE is a real-time action combat game built in Unreal Engine 5.8 where a boss character (BP_Boss) learns and adapts to each player\u2019s unique fighting style through deep reinforcement learning. Instead of hand-scripted enemy patterns, the boss uses a portfolio of 9 layered ML techniques to deliver dynamically challenging and engaging fights."),
 
         heading("1.2 The Problem We Solve", HeadingLevel.HEADING_2),
         para("Most game AI relies on behavior trees, finite state machines, or scripted logic. These approaches have critical limitations:"),
@@ -291,7 +291,7 @@ const doc = new Document({
           columnWidths: [3200, 6160],
           rows: [
             new TableRow({ children: [headerCell("Property", 3200), headerCell("Value", 6160)] }),
-            new TableRow({ children: [cell("Engine", 3200, { bold: true }), cell("Unreal Engine 5.7 (C++)", 6160)] }),
+            new TableRow({ children: [cell("Engine", 3200, { bold: true }), cell("Unreal Engine 5.8 (C++)", 6160)] }),
             new TableRow({ children: [cell("RL Framework", 3200, { bold: true, shading: TABLE_ALT_BG }), cell("Stable Baselines3 (PPO) + PyTorch", 6160, { shading: TABLE_ALT_BG })] }),
             new TableRow({ children: [cell("Communication", 3200, { bold: true }), cell("TCP socket on port 5555, newline-delimited JSON @ ~15 Hz", 6160)] }),
             new TableRow({ children: [cell("Observation Space", 3200, { bold: true, shading: TABLE_ALT_BG }), cell("17\u201329 dimensions (dynamic, config-driven)", 6160, { shading: TABLE_ALT_BG })] }),
@@ -309,7 +309,7 @@ const doc = new Document({
         heading("2.1 Two-Process Design", HeadingLevel.HEADING_2),
         para("The system runs as two cooperating processes on the same machine:"),
         spacer(),
-        boldPara("Process 1 \u2014 Unreal Engine 5.7 (C++): ", "Runs the game world, physics, rendering, combat mechanics, and data collection. All gameplay components are C++ UActorComponents attached to BP_Boss and BP_NeuralHero via the Unreal Blueprint system."),
+        boldPara("Process 1 \u2014 Unreal Engine 5.8 (C++): ", "Runs the game world, physics, rendering, combat mechanics, and data collection. All gameplay components are C++ UActorComponents attached to BP_Boss and BP_NeuralHero via the Unreal Blueprint system."),
         boldPara("Process 2 \u2014 Python RL System: ", "Runs the reinforcement learning agent, training loop, and all ML extensions (IRL, world model, MAML, etc.). Uses gymnasium for the environment interface and Stable Baselines3 for PPO training."),
         spacer(),
         callout("Why two processes? Keeping ML in Python gives us access to the entire PyTorch/SB3 ecosystem while UE5 handles real-time rendering and physics. TCP makes them fully decoupled \u2014 you can restart one without crashing the other."),
@@ -634,7 +634,7 @@ const doc = new Document({
         tealRule(),
 
         heading("7.1 Prerequisites", HeadingLevel.HEADING_2),
-        bullet("Unreal Engine 5.7 installed"),
+        bullet("Unreal Engine 5.8 installed"),
         bullet("Visual Studio or Rider with C++ workload"),
         bullet("Python 3.10+ with pip"),
 

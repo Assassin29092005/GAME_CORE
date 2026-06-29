@@ -8,7 +8,7 @@ title System Architecture — GAME_CORE
 
 actor "Player" as P
 
-package "Unreal Engine 5.7" #FFF8E1 {
+package "Unreal Engine 5.8" #FFF8E1 {
   [BP_NeuralHero\n(Combat + Profile)] as Hero #BBDEFB
   [BP_Boss\n(Combat + RL + Memory + Emotion)] as Boss #FFE0B2
   Hero <--> Boss : combat

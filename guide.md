@@ -22,8 +22,8 @@ Each phase ends with a **"Feels right when"** check — don't move on until it p
 
 Every numbered step now carries a **"Step by step"** block: the exact menu path or asset
 editor panel, the property name, a concrete starting value, and — for code work — the file,
-the function, and what to add. Paths marked *(verify in your 5.7 build)* are stable in
-UE 5.4–5.6 but worth a glance in 5.7 before hunting for a missing button.
+the function, and what to add. Paths marked *(verify in your 5.8 build)* are stable in
+UE 5.4–5.6 but worth a glance in 5.8 before hunting for a missing button.
 
 What makes GoW/Valhalla combat feel AAA, distilled:
 
@@ -55,7 +55,7 @@ Smoothness dies at the frame level first. Do this before touching any animation.
 1. **Open the console.** Press the backtick key (`` ` ``) during PIE — once for the one-line console, twice for the console with log history. The same command field exists at the bottom of Window -> Output Log. If backtick does nothing (non-US keyboard layouts), set the key under Edit -> Project Settings -> Engine -> Input -> Console -> Console Keys.
 2. **Cap and uncap deliberately.** Type `t.MaxFPS 60` to cap at the target, and `r.VSync 0` to take the display's sync out of the measurement (VSync hides whether you actually have headroom — a frame that takes 17 ms and one that takes 9 ms both show "60" with VSync on). Profile with VSync off; turn it back on (`r.VSync 1`) for normal play if you get tearing.
 3. **Disable frame-rate smoothing so it can't lie to you.** Edit -> Project Settings -> Engine -> General Settings -> Framerate -> uncheck **Smooth Frame Rate**. It is on by default and clamps the frame rate into the Min/Max Smoothed Framerate band, which masks real performance. Leave **Use Fixed Frame Rate** off — fixed timestep is for offline rendering, not gameplay.
-4. **Make the cap stick across sessions.** Add to `D:\GAME_CORE\Config\DefaultEngine.ini`:
+4. **Make the cap stick across sessions.** Add to `D:\GAME_CORE 5.8\Config\DefaultEngine.ini`:
 
    ```ini
    [SystemSettings]
@@ -69,11 +69,11 @@ Smoothness dies at the frame level first. Do this before touching any animation.
 7. **Trace a full fight with Unreal Insights.** In the editor, the **Trace** widget lives in the **bottom status bar** (bottom-right corner): click Trace -> **Start Trace** before the fight, fight through at least one death/respawn cycle, then **Stop Trace**. The `default` channel preset (cpu, gpu, frame, log, bookmark) is enough. For a standalone run, launch with the trace argument instead:
 
    ```
-   "C:\Program Files\Epic Games\UE_5.7\Engine\Binaries\Win64\UnrealEditor.exe" "D:\GAME_CORE\GAME_CORE.uproject" -game -windowed -resx=1920 -resy=1080 -trace=default -statnamedevents
+   "C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor.exe" "D:\GAME_CORE 5.8\GAME_CORE.uproject" -game -windowed -resx=1920 -resy=1080 -trace=default -statnamedevents
    ```
 
    `-statnamedevents` adds named scopes so more of the game thread is legible. Standalone numbers are more honest than PIE — the editor itself costs game-thread time.
-8. **Open the trace.** `UnrealInsights.exe` lives at `C:\Program Files\Epic Games\UE_5.7\Engine\Binaries\Win64\UnrealInsights.exe` (you can also launch it from the same Trace status-bar menu: Trace -> Insights -> Unreal Insights (Session Browser) — verify exact menu wording in your 5.7 build). The session browser lists every trace in the local trace store automatically. Open yours, then in Timing Insights: the **Frames** track along the top shows every frame as a bar — long red bars are hitches. Click one, then read the **GameThread** track below it: the widest scope inside the spike is your culprit. The **Timers** tab (sortable by Inclusive time) tells you what's expensive *on average*; the Frames track tells you what *hitches* — you need both. Docs: [Trace Quick Start](https://dev.epicgames.com/documentation/en-us/unreal-engine/trace-quick-start-guide-in-unreal-engine) and [Unreal Insights](https://dev.epicgames.com/documentation/unreal-engine/unreal-insights-in-unreal-engine?lang=en-US).
+8. **Open the trace.** `UnrealInsights.exe` lives at `C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealInsights.exe` (you can also launch it from the same Trace status-bar menu: Trace -> Insights -> Unreal Insights (Session Browser) — verify exact menu wording in your 5.8 build). The session browser lists every trace in the local trace store automatically. Open yours, then in Timing Insights: the **Frames** track along the top shows every frame as a bar — long red bars are hitches. Click one, then read the **GameThread** track below it: the widest scope inside the spike is your culprit. The **Timers** tab (sortable by Inclusive time) tells you what's expensive *on average*; the Frames track tells you what *hitches* — you need both. Docs: [Trace Quick Start](https://dev.epicgames.com/documentation/en-us/unreal-engine/trace-quick-start-guide-in-unreal-engine) and [Unreal Insights](https://dev.epicgames.com/documentation/unreal-engine/unreal-insights-in-unreal-engine?lang=en-US).
 9. **Check the known suspects first.** Search the Timers tab for montage and bridge scopes, and grep the Output Log for per-frame `LogTemp` lines — logging inside a 60 Hz tick is itself a measurable game-thread cost, and the leftover diagnostic logs should be stripped regardless.
 
 **0.2 — Audit the RL bridge for frame-time impact.**
@@ -252,12 +252,12 @@ which constrains the options — plan around it.
    Plugins. Open its example maps and play them; when one of the sample pawns moves the way
    you want, open its Animation Blueprint and note how it feeds trajectory into pose search.
    What ships varies by engine version — if no pose-search-driven Mover pawn exists in your
-   5.7 MoverExamples, treat that as a strong signal to take Option B (verify in your 5.7 build).
+   5.8 MoverExamples, treat that as a strong signal to take Option B (verify in your 5.8 build).
 2. **Get the animation data.** The **Game Animation Sample** (Epic Games Launcher -> Fab ->
    search "Game Animation Sample", free) ships 500+ locomotion animations — idles, starts,
    stops, pivots, turn-in-place — on the UE5 Mannequin skeleton. Create it as a separate
    project, then migrate the animation folders (right-click folder -> Asset Actions ->
-   Migrate, target `D:\GAME_CORE\Content`). BP_NeuralHero's mesh is UEFN/UE5-Mannequin
+   Migrate, target `D:\GAME_CORE 5.8\Content`). BP_NeuralHero's mesh is UEFN/UE5-Mannequin
    family, so the anims either work directly or are one retarget away: select the imported
    sequences -> right-click -> **Retarget Animations**, pick source and target mesh — UE 5.4+
    auto-generates the IK rigs for Mannequin-family skeletons.
@@ -310,7 +310,7 @@ which constrains the options — plan around it.
 2. In the Details panel, ground movement numbers live in the Mover component's shared
    settings object — in the 5.4–5.6 plugin this is **Common Legacy Movement Settings**,
    listed on the component alongside the Movement Modes map (verify the exact grouping in
-   your 5.7 build; the property names below are from the plugin source). Set:
+   your 5.8 build; the property names below are from the plugin source). Set:
 
    | Property | Hero value | Why |
    |---|---|---|
@@ -570,7 +570,7 @@ Every attack has three windows; make them explicit per `FAttackAnimData` entry i
    In its Details set **Root Shake Pattern = Perlin Noise Camera Shake Pattern**, Duration
    0.15–0.25, small rotation amplitudes (Pitch/Yaw 0.3–0.6), and on the heavy variant an
    **FOV amplitude of 1.5–2** (the pattern has Location/Rotation/FOV sections — verify the
-   exact property layout in your 5.7 build). Assign to **HitCameraShake** on each pawn's
+   exact property layout in your 5.8 build). Assign to **HitCameraShake** on each pawn's
    HitFeedbackComponent (Details -> HitFeedback -> CameraShake).
 5. **Rebuild** (struct change — Build.bat, editor closed), set values in the four data
    assets, and tune in Phase 8's 20-minute loops. These numbers are exactly why the fields
@@ -846,7 +846,7 @@ editor closed per the CLAUDE.md caveats — batch them.
    `StateObservationComponent` serializes `FRLObservation` to JSON (the same payload
    `RLBridgeComponent::SendObservation` ships).
 
-3. In `D:\GAME_CORE\Python\boss_env.py`, in `BossEnv._receive_observation`, store the field,
+3. In `D:\GAME_CORE 5.8\Python\boss_env.py`, in `BossEnv._receive_observation`, store the field,
    and add the method `MaskablePPO` looks for:
 
    ```python
@@ -891,7 +891,7 @@ editor closed per the CLAUDE.md caveats — batch them.
    **Sections** track -> New Montage Section. Create `Windup` at time 0 and `Active` at the
    frame the swing starts traveling — just before your `ANS_DealDamage` window begins. In
    the Montage Sections panel (Window -> Montage Sections in UE 5.4–5.6; verify exact
-   location in your 5.7 build), confirm `Windup` chains into `Active` sequentially.
+   location in your 5.8 build), confirm `Windup` chains into `Active` sequentially.
 
 3. Slow the wind-up at runtime. Montages don't store per-section play rates, so set the rate
    on play and restore it at the section boundary. In
@@ -1102,7 +1102,7 @@ editor closed per the CLAUDE.md caveats — batch them.
    - **C++**: `URLBridgeComponent::TickRate` (`UPROPERTY`, default 15, clamped 1–60). In the
      editor: open BP_Boss -> Components panel -> select RLBridgeComponent -> Details panel ->
      RLBridge -> **Tick Rate**.
-   - **Python**: `env.step_delay: 0.066` in `D:\GAME_CORE\Python\config.yaml` (the
+   - **Python**: `env.step_delay: 0.066` in `D:\GAME_CORE 5.8\Python\config.yaml` (the
      `BossEnv.__init__` default `step_delay=0.066` mirrors it — the `time.sleep` in
      `BossEnv.step` between sending the action and requesting the next observation).
 
@@ -1139,7 +1139,7 @@ GoW's camera is a gameplay system. Budget real time here; a bad camera makes gre
 1. Open BP_NeuralHero (Content Browser -> Content/Blueprints/BP_NeuralHero, double-click)
    and select the **SpringArm** component in the Components panel. All settings below are in
    its Details panel. (Property display names are stable from UE 5.4 through 5.6 and should
-   match in 5.7.)
+   match in 5.8.)
 
 2. Under the **Lag** category, set:
 
@@ -1371,7 +1371,7 @@ GoW's camera is a gameplay system. Budget real time here; a bad camera makes gre
      code path. Displacement is whatever the anim authors (aim for 2.5–4 m).
    - **Mover impulse APIs.** The Mover plugin ships instant movement effects (apply-velocity
      style) queued on the Mover component — the API names shifted across 5.x versions, so
-     check the plugin source / MoverExamples for the 5.7 form (verify in your build). Budget
+     check the plugin source / MoverExamples for the 5.8 form (verify in your build). Budget
      a one-hour test before relying on it; if the root-motion route already feels right,
      skip this entirely.
 2. **Wire the trigger.** In `PlayHitReaction`, when intensity is Heavy *and* the hit is a

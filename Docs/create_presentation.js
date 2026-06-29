@@ -152,7 +152,7 @@ async function buildPresentation() {
     });
 
     // Tech stack pills
-    const pills = ["Unreal Engine 5.7", "C++", "Python", "PyTorch", "Stable Baselines3"];
+    const pills = ["Unreal Engine 5.8", "C++", "Python", "PyTorch", "Stable Baselines3"];
     const pillW = 1.65;
     const totalW = pills.length * pillW + (pills.length - 1) * 0.15;
     const startX = (10 - totalW) / 2;
@@ -199,7 +199,7 @@ async function buildPresentation() {
       fontSize: 16, fontFace: "Calibri", color: C.teal, bold: true, margin: 0
     });
     s.addText([
-      { text: "A real-time action combat game built in Unreal Engine 5.7 where a ", options: { breakLine: false } },
+      { text: "A real-time action combat game built in Unreal Engine 5.8 where a ", options: { breakLine: false } },
       { text: "boss character learns and adapts", options: { bold: true, breakLine: false } },
       { text: " to each player's unique fighting style through deep reinforcement learning.", options: {} },
     ], {
@@ -231,7 +231,7 @@ async function buildPresentation() {
     });
 
     const facts = [
-      ["Engine", "Unreal Engine 5.7 (C++)"],
+      ["Engine", "Unreal Engine 5.8 (C++)"],
       ["RL Framework", "Stable Baselines3 + PyTorch"],
       ["Communication", "TCP socket, JSON @ 15 Hz"],
       ["Observation", "Up to 29-dim dynamic vector"],
@@ -285,7 +285,7 @@ async function buildPresentation() {
     });
     s.addShape(pres.shapes.RECTANGLE, { x: 0.5, y: 1.15, w: 4.0, h: 0.45, fill: { color: C.navy } });
     s.addImage({ data: icons.cogsW, x: 0.7, y: 1.22, w: 0.3, h: 0.3 });
-    s.addText("Unreal Engine 5.7 (C++)", {
+    s.addText("Unreal Engine 5.8 (C++)", {
       x: 1.05, y: 1.15, w: 3.3, h: 0.45,
       fontSize: 13, fontFace: "Calibri", color: C.white, bold: true, valign: "middle", margin: 0
     });

@@ -9,7 +9,7 @@ Built with React + Vite + Firebase (Auth, Firestore, Hosting) + recharts.
 ## Run it right now (no Firebase needed)
 
 ```
-cd D:\GAME_CORE\Website
+cd "D:\GAME_CORE 5.8\Website"
 npm install
 npm run dev
 ```
@@ -37,7 +37,7 @@ before any backend exists. The yellow strip reminds you it's demo data.
 ```
 npm install -g firebase-tools
 firebase login
-cd D:\GAME_CORE\Website
+cd "D:\GAME_CORE 5.8\Website"
 firebase use --add        # pick the project you created
 npm run build
 firebase deploy           # deploys hosting (dist/) + firestore.rules

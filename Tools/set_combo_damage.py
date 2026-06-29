@@ -2,7 +2,7 @@
 
 Run INSIDE the UE editor (the editor's Python, not the venv):
   Output Log -> set the 'Cmd' dropdown to 'Python' -> paste:
-      py "D:/GAME_CORE/Tools/set_combo_damage.py"
+      py "D:/GAME_CORE 5.8/Tools/set_combo_damage.py"
   (or Tools -> Execute Python Script... and pick this file)
 
 Damage scheme per ComboChain of length N (0-based step i):

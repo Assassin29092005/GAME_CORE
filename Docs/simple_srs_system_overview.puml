@@ -8,7 +8,7 @@ title SRS — System Overview
 
 actor "Player" as P
 
-package "Unreal Engine 5.7" #FFF8E1 {
+package "Unreal Engine 5.8" #FFF8E1 {
   [BP_NeuralHero] as Hero #BBDEFB
   [BP_Boss] as Boss #FFE0B2
   database "CombatAnimConfig" as CFG

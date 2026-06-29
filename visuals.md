@@ -12,7 +12,7 @@ else is negotiable.
 
 Contents: renderer setup and the VRAM/RAM budget, a five-actor lighting rig for the arena,
 art direction that reads at this budget, combat VFX, scalability defaults — then the full
-**Blender -> UE 5.7 terrain pipeline** (two routes, with a recommendation), set dressing,
+**Blender -> UE 5.8 terrain pipeline** (two routes, with a recommendation), set dressing,
 and Blender-on-this-laptop limits.
 
 ---
@@ -26,7 +26,7 @@ The whole visual stack below is chosen around one constraint: 6 GB of VRAM share
 - **Edit -> Project Settings -> Engine -> Rendering -> Global Illumination -> Dynamic Global Illumination Method = Lumen.** Applies live (expect a shader recompile in the background), no restart.
 - **Edit -> Project Settings -> Engine -> Rendering -> Reflections -> Reflection Method = Lumen.** Same — no restart.
 - **Edit -> Project Settings -> Engine -> Rendering -> Lumen -> Use Hardware Ray Tracing when Available = unchecked.** This is the load-bearing decision. The 4050 *supports* HWRT, but enabling it builds ray-tracing acceleration structures (BLAS) for every mesh resident in memory — typically several hundred MB to over 1 GB of VRAM you don't have, before any quality gain shows up. Software Lumen traces against mesh distance fields instead, costs near-zero extra VRAM, and at one-arena/two-characters scale the visual difference is marginal. Leave **Engine -> Rendering -> Hardware Ray Tracing -> Support Hardware Ray Tracing** unchecked too (it requires an editor restart to change), so the structures are never built at all.
-- One honesty note: in 5.7 Epic is steering Lumen toward the hardware path long-term and has deprecated the software "detail traces" mode (see [Tom Looman's 5.7 highlights](https://tomlooman.com/unreal-engine-5-7-performance-highlights/) and the [Lumen technical docs](https://dev.epicgames.com/documentation/en-us/unreal-engine/lumen-technical-details-in-unreal-engine)). Software Lumen still works in 5.7; set **Engine -> Rendering -> Lumen -> Software Ray Tracing Mode = Global Tracing** (the cheaper mode, and the one that survives the deprecation — verify exact options in your 5.7 build). Revisit HWRT only if you move to an 8+ GB card.
+- One honesty note: in 5.8 Epic is steering Lumen toward the hardware path long-term and has deprecated the software "detail traces" mode (see [Tom Looman's 5.7 highlights](https://tomlooman.com/unreal-engine-5-7-performance-highlights/) and the [Lumen technical docs](https://dev.epicgames.com/documentation/en-us/unreal-engine/lumen-technical-details-in-unreal-engine)). Software Lumen still works in 5.8; set **Engine -> Rendering -> Lumen -> Software Ray Tracing Mode = Global Tracing** (the cheaper mode, and the one that survives the deprecation — verify exact options in your 5.8 build). Revisit HWRT only if you move to an 8+ GB card.
 - Software Lumen requires distance fields: confirm **Engine -> Rendering -> Software Ray Tracing -> Generate Mesh Distance Fields = checked**. Changing this prompts an editor restart and rebuilds meshes.
 
 **Shadows:**
@@ -36,7 +36,7 @@ The whole visual stack below is chosen around one constraint: 6 GB of VRAM share
 
 **Nanite:**
 
-- New 5.x projects ship with Nanite enabled; confirm at **Edit -> Project Settings -> Engine -> Rendering -> Nanite -> Nanite Support = checked** (expect a shader recompile; restart if prompted — verify exact label in your 5.7 build). Nanite has a fixed base cost (~1–2 ms at 1080p) but it is what makes Megascans-density arena meshes affordable, and software Lumen traces work fine against it.
+- New 5.x projects ship with Nanite enabled; confirm at **Edit -> Project Settings -> Engine -> Rendering -> Nanite -> Nanite Support = checked** (expect a shader recompile; restart if prompted — verify exact label in your 5.8 build). Nanite has a fixed base cost (~1–2 ms at 1080p) but it is what makes Megascans-density arena meshes affordable, and software Lumen traces work fine against it.
 - Per-mesh: open the static mesh asset, **Static Mesh editor -> Details panel -> Nanite Settings -> Enable Nanite Support = checked**, then Apply Changes. Use it for all arena architecture; skeletal meshes (both pawns) are not Nanite and don't need to be.
 
 **Anti-aliasing and upscaling:**
@@ -49,7 +49,7 @@ The whole visual stack below is chosen around one constraint: 6 GB of VRAM share
   r.ScreenPercentage=80
   ```
 
-- **Optional DLSS route (recommended on this GPU):** install the [NVIDIA DLSS plugin](https://forums.developer.nvidia.com/t/ue-5-7-dlss-4-unreal-engine-plugin-status-update/351358) — get it from Fab (Epic Games Launcher -> Fab, search "NVIDIA DLSS") or NVIDIA's developer site, which ships a 5.7-specific build. Drop it in `D:\GAME_CORE\Plugins\` if installing per-project, then **Edit -> Plugins -> search "DLSS" -> Enabled**, and restart the editor (all plugin toggles require a restart). Configure under **Edit -> Project Settings -> Plugins -> NVIDIA DLSS** (verify the exact page name in your build). At runtime, `r.NGX.DLSS.Enable 1` turns it on, and quality mode follows screen percentage: `r.ScreenPercentage 66` ≈ DLSS Quality, `50` ≈ Performance. DLSS Quality at 1080p generally beats TSR at the same input resolution on a 40-series card, at lower GPU cost. Keep TSR as the project default so the game still works on non-NVIDIA hardware.
+- **Optional DLSS route (recommended on this GPU):** install the [NVIDIA DLSS plugin](https://forums.developer.nvidia.com/t/ue-5-7-dlss-4-unreal-engine-plugin-status-update/351358) — get it from Fab (Epic Games Launcher -> Fab, search "NVIDIA DLSS") or NVIDIA's developer site, which ships a 5.8-specific build. Drop it in `D:\GAME_CORE 5.8\Plugins\` if installing per-project, then **Edit -> Plugins -> search "DLSS" -> Enabled**, and restart the editor (all plugin toggles require a restart). Configure under **Edit -> Project Settings -> Plugins -> NVIDIA DLSS** (verify the exact page name in your build). At runtime, `r.NGX.DLSS.Enable 1` turns it on, and quality mode follows screen percentage: `r.ScreenPercentage 66` ≈ DLSS Quality, `50` ≈ Performance. DLSS Quality at 1080p generally beats TSR at the same input resolution on a 40-series card, at lower GPU cost. Keep TSR as the project default so the game still works on non-NVIDIA hardware.
 
 **Restart summary:** plugin enable/disable, Support Hardware Ray Tracing, and Generate Mesh Distance Fields need an editor restart. The GI / Reflection / Shadow / AA method dropdowns apply live.
 
@@ -94,7 +94,7 @@ r.Streaming.PoolSize=2200
 - **Run the game standalone when training, not PIE.** PIE keeps the entire editor resident next to the game (~6–9 GB combined), plus Python/torch on top. Close the editor and launch the game directly:
 
   ```
-  "C:\Program Files\Epic Games\UE_5.7\Engine\Binaries\Win64\UnrealEditor.exe" "D:\GAME_CORE\GAME_CORE.uproject" -game -windowed -ResX=1920 -ResY=1080
+  "C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor.exe" "D:\GAME_CORE 5.8\GAME_CORE.uproject" -game -windowed -ResX=1920 -ResY=1080
   ```
 
   `RLBridgeComponent` hosts the TCP server in-game, so `train.py` connects to a standalone process the same as it does to PIE.

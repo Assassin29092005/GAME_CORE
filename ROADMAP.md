@@ -175,7 +175,7 @@ budgets in the VRAM table, and the grayscale-screenshot readability test passes.
 1. Export: `python export_onnx.py --model checkpoints/<best>.zip` (script
    verifies torch/ONNX/SB3 agreement automatically).
 2. UE: Edit → Plugins → enable **Neural Network Engine (NNE)** → restart →
-   import the `.onnx` (verify the runtime/import flow in your 5.7 build —
+   import the `.onnx` (verify the runtime/import flow in your 5.8 build —
    NNE's API surface moved between 5.x versions).
 3. **`NNEBossPolicyComponent`** (new C++ on BP_Boss): loads the model asset,
    and on the same ~15 Hz cadence builds the observation **reusing
