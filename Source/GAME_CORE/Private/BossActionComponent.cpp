@@ -2,8 +2,10 @@
 #include "Animation/AnimInstance.h"
 #include "GameFramework/Pawn.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Kismet/GameplayStatics.h"
 #include "HitReactionComponent.h"
 #include "CombatComponent.h"
+#include "MoverComponent.h"
 
 UBossActionComponent::UBossActionComponent()
 {
@@ -12,6 +14,40 @@ UBossActionComponent::UBossActionComponent()
 	// At default priority, Mover overwrites SetActorRotation each frame and the boss
 	// never visibly turns to face the hero. PostPhysics runs after Mover's update.
 	PrimaryComponentTick.TickGroup = TG_PostPhysics;
+}
+
+void UBossActionComponent::BeginPlay()
+{
+	Super::BeginPlay();
+
+	// Auto-acquire the player pawn as the rotation/movement target if BP didn't
+	// assign one. Removes the dependency on a BP "SetupBossAI" step firing —
+	// the boss now faces the hero out of the box.
+	if (!TargetActor)
+	{
+		if (APawn* PlayerPawn = UGameplayStatics::GetPlayerPawn(this, 0))
+		{
+			TargetActor = PlayerPawn;
+			UE_LOG(LogTemp, Log, TEXT("BossAction: Auto-acquired player pawn '%s' as TargetActor."), *PlayerPawn->GetName());
+		}
+	}
+
+	// CRITICAL Mover fix: the boss drives facing (SetActorRotation) and movement
+	// (AddActorWorldOffset) from outside Mover's input pipeline. By default Mover
+	// treats those as "external movement", logs a warning, and reconciles them
+	// AWAY from its authoritative sim state next frame — so the boss never turned
+	// to face the hero and its run/dodge barely displaced (~half speed + jitter).
+	// Telling Mover to ACCEPT external movement makes it ingest our per-tick
+	// transform changes into the sim state instead of fighting them.
+	if (AActor* Owner = GetOwner())
+	{
+		if (UMoverComponent* MoverComp = Owner->FindComponentByClass<UMoverComponent>())
+		{
+			MoverComp->bAcceptExternalMovement = true;
+			MoverComp->bWarnOnExternalMovement = false; // silence the 6000+ out-of-band warnings
+			UE_LOG(LogTemp, Log, TEXT("BossAction: Mover set to accept external movement (facing/move fix)."));
+		}
+	}
 }
 
 void UBossActionComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -66,16 +102,15 @@ void UBossActionComponent::TickComponent(float DeltaTime, ELevelTick TickType, F
 		}
 	}
 
-	if (bIsMoving)
+	if (bIsMoving && !MoveDirection.IsNearlyZero() && CurrentMoveSpeed > 0.0f)
 	{
-		APawn* OwnerPawn = Cast<APawn>(Owner);
-		if (OwnerPawn)
-		{
-			// Use AddMovementInput so the Mover/CharacterMover handles gravity, collision, and velocity.
-			// Scale: 1.0 = max speed for approach, reduced for retreat.
-			const float Scale = (CurrentMoveSpeed >= ApproachSpeed) ? 1.0f : 0.75f;
-			OwnerPawn->AddMovementInput(MoveDirection, Scale);
-		}
+		// Code-driven displacement (sweep) — NOT AddMovementInput. The boss is a
+		// Mover pawn and Mover ignores APawn::AddMovementInput (the same gotcha the
+		// hero hits), so the boss played its run/dodge animation but never moved.
+		// AddActorWorldOffset per tick is the proven path (the hero dodge uses it).
+		const FVector StepOffset = MoveDirection.GetSafeNormal() * CurrentMoveSpeed * DeltaTime;
+		FHitResult SweepHit;
+		Owner->AddActorWorldOffset(StepOffset, /*bSweep*/ true, &SweepHit, ETeleportType::None);
 	}
 }
 
@@ -115,6 +150,18 @@ void UBossActionComponent::HandleDeath()
 
 	// Notify Blueprint so it can trigger round reset after a delay
 	OnBossDied.Broadcast();
+
+	// Insurance: schedule the full-arena reset directly off the boss's death too,
+	// so it fires even if the boss's HP didn't run through CombatComponent::ApplyDamage's
+	// death branch. ScheduleRoundReset self-gates on bAutoResetRoundOnDeath, so this is a
+	// no-op in shipped play and harmless (one-shot timer) if ApplyDamage already scheduled.
+	if (AActor* Owner = GetOwner())
+	{
+		if (UCombatComponent* Combat = Owner->FindComponentByClass<UCombatComponent>())
+		{
+			Combat->ScheduleRoundReset();
+		}
+	}
 
 	UE_LOG(LogTemp, Log, TEXT("BossAction: Boss has died — OnBossDied broadcast"));
 }
@@ -174,6 +221,14 @@ void UBossActionComponent::DoBlock()
 	{
 		bIsPerformingAction = true;
 		PlayMontage(BlockMontage);
+
+		// Activate the actual block damage-reduction on CombatComponent so the
+		// RL "Block" action isn't visual-only. Cleared in OnActionMontageEnded.
+		if (UCombatComponent* Combat = GetOwner() ? GetOwner()->FindComponentByClass<UCombatComponent>() : nullptr)
+		{
+			Combat->SetBlocking(true);
+		}
+
 		UE_LOG(LogTemp, Log, TEXT("BossAction: Block"));
 	}
 }
@@ -184,7 +239,19 @@ void UBossActionComponent::DoDodge()
 	{
 		bIsPerformingAction = true;
 		PlayMontage(DodgeMontage);
-		UE_LOG(LogTemp, Log, TEXT("BossAction: Dodge"));
+
+		// Displace the boss during the dodge (montage alone has no root motion that
+		// Mover consumes). Evade away from the target via the same AddActorWorldOffset
+		// movement burst the approach/retreat path uses.
+		FVector DodgeDir = -GetOwner()->GetActorForwardVector();
+		if (TargetActor)
+		{
+			const FVector Away = (GetOwner()->GetActorLocation() - TargetActor->GetActorLocation()).GetSafeNormal2D();
+			if (!Away.IsNearlyZero()) DodgeDir = Away;
+		}
+		MoveInDirection(DodgeDir, DodgeSpeed, DodgeDuration);
+
+		UE_LOG(LogTemp, Log, TEXT("BossAction: Dodge -> %s"), *DodgeDir.ToCompactString());
 	}
 }
 
@@ -295,4 +362,14 @@ void UBossActionComponent::PlayMontage(UAnimMontage* Montage)
 void UBossActionComponent::OnActionMontageEnded(UAnimMontage* Montage, bool bInterrupted)
 {
 	bIsPerformingAction = false;
+
+	// Drop the block guard when the block montage ends so the RL Block action
+	// is a momentary defensive window, not a permanent stance.
+	if (Montage == BlockMontage)
+	{
+		if (UCombatComponent* Combat = GetOwner() ? GetOwner()->FindComponentByClass<UCombatComponent>() : nullptr)
+		{
+			Combat->SetBlocking(false);
+		}
+	}
 }

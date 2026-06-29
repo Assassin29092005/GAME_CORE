@@ -21,6 +21,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 public:
 	// --- Health ---
@@ -30,8 +31,16 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|Health")
 	float CurrentHealth;
 
+	/** Optional death montage played by ApplyDamage when health hits zero. Assign
+	 *  on the HERO (whose death is otherwise unanimated). LEAVE EMPTY on the boss —
+	 *  the boss plays its death montage through BossActionComponent::HandleDeath, so
+	 *  assigning here too would double-play. ResetForNewRound's StopAllMontages
+	 *  clears it on respawn. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Health")
+	TObjectPtr<UAnimMontage> DeathMontage;
+
 	UFUNCTION(BlueprintCallable, Category = "Combat|Health")
-	void ApplyDamage(float DamageAmount, AActor* InstigatorActor = nullptr);
+	void ApplyDamage(float DamageAmount, AActor* InstigatorActor = nullptr, FName DamageType = FName("Light"));
 
 	/** Direction FROM the last damaging attacker TO us (world, 2D). Cached for
 	 *  knockback/ragdoll impulses (guide.md Phase 6). Zero until first hit. */
@@ -52,34 +61,70 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Health")
 	float PostResetInvulnerabilityDuration = 3.0f;
 
+	/** When true, ResetForNewRound teleports the actor back to where it was at
+	 *  BeginPlay (its spawn point). Covers the "hero keeps fighting from where it
+	 *  died instead of respawning" case without any BP wiring. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Health")
+	bool bRestoreSpawnTransformOnReset = true;
+
 	UFUNCTION(BlueprintPure, Category = "Combat|Health")
 	bool IsInvulnerable() const { return bIsInvulnerable; }
+
+	UFUNCTION(BlueprintPure, Category = "Combat|Health")
+	bool IsDead() const { return bIsDead; }
 
 	/** Restore full health and clear the dead flag. Call this when starting a new round. */
 	UFUNCTION(BlueprintCallable, Category = "Combat|Health")
 	void ResetForNewRound();
 
+	// --- Round coordination ---
+
+	/** When true, this actor's death automatically schedules a FULL round reset
+	 *  (every combatant in the arena returns to spawn + full HP) after
+	 *  RoundResetDelay. Tick this on BOTH the hero and the boss so whichever dies
+	 *  triggers the reset. Training-loop convenience — for shipped play, where
+	 *  boss-death = victory, leave it false and handle the win screen in BP. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Round")
+	bool bAutoResetRoundOnDeath = false;
+
+	/** Seconds to wait after a death before the auto round reset fires — the pause
+	 *  between rounds, and the window the death montage plays in. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Round", meta = (ClampMin = "0.0"))
+	float RoundResetDelay = 2.5f;
+
+	/** Reset EVERY combatant in the arena (every actor with a CombatComponent),
+	 *  not just this one. Safe to call from either death path or manually. */
+	UFUNCTION(BlueprintCallable, Category = "Combat|Round")
+	void TriggerRoundReset();
+
+	/** Schedule a full-arena TriggerRoundReset after RoundResetDelay. Self-gates on
+	 *  bAutoResetRoundOnDeath, so it's safe to call from any death path. */
+	UFUNCTION(BlueprintCallable, Category = "Combat|Round")
+	void ScheduleRoundReset();
+
 	// --- Dodge ---
-	// Directional dodge montages, selected against LastMovementInput the same
-	// way SelectComboByDirection works. No input -> backstep (DodgeBackMontage).
-	// Assign UNIQUE montage assets per character (play mutates blend/root-motion
-	// on the asset — the project-wide montage caveat).
+	// Single backstep, the souls-like default. Alt always plays this regardless
+	// of WASD. Assign a UNIQUE montage asset per character (play mutates blend/
+	// root-motion on the asset — the project-wide montage caveat).
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Dodge")
-	TObjectPtr<UAnimMontage> DodgeFrontMontage;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Dodge")
-	TObjectPtr<UAnimMontage> DodgeBackMontage;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Dodge")
-	TObjectPtr<UAnimMontage> DodgeLeftMontage;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Dodge")
-	TObjectPtr<UAnimMontage> DodgeRightMontage;
+	TObjectPtr<UAnimMontage> DodgeMontage;
 
 	/** Near-instant by design — a dodge that cross-fades gets you hit. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Dodge", meta = (ClampMin = "0.0", ClampMax = "0.3"))
 	float DodgeBlendInTime = 0.05f;
+
+	/** Guaranteed evasion distance (cm). Hero is pushed this far backward over
+	 *  DodgeDuration via AddActorWorldOffset (sweep) — independent of the source
+	 *  animation's authored root motion. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Dodge", meta = (ClampMin = "0.0", ClampMax = "1500.0"))
+	float DodgeDistance = 350.0f;
+
+	/** Duration over which the displacement is applied (seconds). Should roughly
+	 *  match the animation's travel window — too short and it teleport-pops,
+	 *  too long and the actor keeps moving after the anim settles. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Dodge", meta = (ClampMin = "0.05", ClampMax = "1.5"))
+	float DodgeDuration = 0.35f;
 
 	/** Hook IA_Dodge Started -> here. Ignores attack cooldown on purpose. */
 	UFUNCTION(BlueprintCallable, Category = "Combat|Dodge")
@@ -101,6 +146,11 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Block")
 	TObjectPtr<UAnimMontage> BlockHitMontage;
+
+	/** Plays when a Heavy attack lands on a frontal block. Forces SetBlocking(false)
+	 *  and full damage through (the guard is shattered, not just impacted). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Block")
+	TObjectPtr<UAnimMontage> BlockBreakMontage;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Block")
 	TObjectPtr<UAnimMontage> BlockEndMontage;
@@ -237,6 +287,14 @@ private:
 	FTimerHandle InvulnTimerHandle;
 	void ClearInvulnerability();
 
+	// Captured at BeginPlay; restored by ResetForNewRound when
+	// bRestoreSpawnTransformOnReset is set, so the actor respawns where it began.
+	FTransform SpawnTransform;
+	bool bSpawnTransformCaptured = false;
+
+	// One-shot timer that fires TriggerRoundReset RoundResetDelay seconds after death.
+	FTimerHandle RoundResetTimerHandle;
+
 	// Tracks the active combo montage to ignore stale end-delegate callbacks
 	UPROPERTY()
 	TObjectPtr<UAnimMontage> CurrentComboMontage;
@@ -257,8 +315,11 @@ private:
 	UPROPERTY()
 	TObjectPtr<UAnimMontage> CurrentBlockMontage;
 
-	UAnimMontage* SelectDodgeMontage() const;
 	void PlayBlockMontage(UAnimMontage* Montage);
+
+	// Code-driven dodge push state. Captured at RequestDodge, advanced in Tick.
+	FVector DodgeDirection = FVector::ZeroVector;
+	float DodgeElapsed = 0.0f;
 
 	UFUNCTION()
 	void OnDodgeMontageEnded(UAnimMontage* Montage, bool bInterrupted);

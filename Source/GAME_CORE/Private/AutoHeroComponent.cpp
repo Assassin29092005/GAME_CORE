@@ -23,7 +23,7 @@ namespace
 	// Counter persona: how long the post-swing punish window stays open.
 	constexpr float PunishWindow = 0.6f;
 	// Comfort band around PreferredRange before the bot corrects distance.
-	constexpr float RangeSlack = 80.0f;
+	constexpr float RangeSlack = 40.0f;
 }
 
 UAutoHeroComponent::UAutoHeroComponent()
@@ -39,35 +39,42 @@ bool UAutoHeroComponent::LoadPersona(const FString& InName)
 	const FString Key = InName.ToLower();
 	FAutoHeroPersona P;
 
+	// Distances retuned for hand-socket trace (~110cm reach). PreferredRange =
+	// where the bot hovers; AttackRange (160cm default) is the press-button gate.
 	if (Key == TEXT("rusher"))
 	{
-		P.Aggression = 0.9f;  P.PreferredRange = 150.f; P.EvadeReactChance = 0.1f;
+		P.Aggression = 0.9f;  P.PreferredRange = 110.f; P.EvadeReactChance = 0.1f;
 		P.ComboCommitment = 0.9f; P.DecisionInterval = 0.2f; P.StrafeBias = 0.2f;
 		P.DirectionalAttackChance = 0.5f; P.bPunishAfterBossSwing = false;
+		P.BlockChance = 0.05f;
 	}
 	else if (Key == TEXT("turtle"))
 	{
-		P.Aggression = 0.25f; P.PreferredRange = 350.f; P.EvadeReactChance = 0.55f;
+		P.Aggression = 0.25f; P.PreferredRange = 220.f; P.EvadeReactChance = 0.3f;
 		P.ComboCommitment = 0.4f; P.DecisionInterval = 0.35f; P.StrafeBias = 0.35f;
 		P.DirectionalAttackChance = 0.4f; P.bPunishAfterBossSwing = false;
+		P.BlockChance = 0.6f;
 	}
 	else if (Key == TEXT("kiter"))
 	{
-		P.Aggression = 0.45f; P.PreferredRange = 450.f; P.EvadeReactChance = 0.5f;
+		P.Aggression = 0.45f; P.PreferredRange = 280.f; P.EvadeReactChance = 0.5f;
 		P.ComboCommitment = 0.5f; P.DecisionInterval = 0.25f; P.StrafeBias = 0.7f;
 		P.DirectionalAttackChance = 0.6f; P.bPunishAfterBossSwing = false;
+		P.BlockChance = 0.1f;
 	}
 	else if (Key == TEXT("counter"))
 	{
-		P.Aggression = 0.35f; P.PreferredRange = 260.f; P.EvadeReactChance = 0.65f;
+		P.Aggression = 0.35f; P.PreferredRange = 160.f; P.EvadeReactChance = 0.4f;
 		P.ComboCommitment = 0.7f; P.DecisionInterval = 0.2f; P.StrafeBias = 0.4f;
 		P.DirectionalAttackChance = 0.5f; P.bPunishAfterBossSwing = true;
+		P.BlockChance = 0.4f;
 	}
 	else if (Key == TEXT("chaotic"))
 	{
-		P.Aggression = 0.6f;  P.PreferredRange = 300.f; P.EvadeReactChance = 0.3f;
+		P.Aggression = 0.6f;  P.PreferredRange = 180.f; P.EvadeReactChance = 0.3f;
 		P.ComboCommitment = 0.5f; P.DecisionInterval = 0.15f; P.StrafeBias = 0.5f;
 		P.DirectionalAttackChance = 1.0f; P.bPunishAfterBossSwing = false;
+		P.BlockChance = 0.25f;
 	}
 	else
 	{
@@ -148,6 +155,27 @@ void UAutoHeroComponent::StartEvade(const FVector& ToBossDir, double Now)
 	{
 		Combat->SetMovementInput(WorldDirToInputSpace(EvadeDir));
 		Combat->RequestDodge();
+	}
+}
+
+void UAutoHeroComponent::StartBlock(double Now)
+{
+	if (!Combat) return;
+	// SetBlocking self-gates (refuses while attacking/dodging/dead).
+	Combat->SetBlocking(true);
+	if (Combat->IsBlocking())
+	{
+		bBlockingNow = true;
+		BlockUntil = Now + FMath::Max(Persona.BlockHoldDuration, 0.1f);
+	}
+}
+
+void UAutoHeroComponent::ReleaseBlock()
+{
+	bBlockingNow = false;
+	if (Combat)
+	{
+		Combat->SetBlocking(false);
 	}
 }
 
@@ -328,12 +356,17 @@ void UAutoHeroComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 			ETeleportType::TeleportPhysics);
 	}
 
-	// ── Reactive evade: one dice roll per boss swing. ──
+	// ── Reactive defense: one dice roll per boss swing — block OR dodge. ──
 	const bool bSwinging = IsBossSwinging();
 	if (bSwinging && !bEvadeRolledThisSwing && Dist < EvadeTriggerRange)
 	{
 		bEvadeRolledThisSwing = true;
-		if (FMath::FRand() < Persona.EvadeReactChance)
+		const float Roll = FMath::FRand();
+		if (Roll < Persona.BlockChance)
+		{
+			StartBlock(Now);
+		}
+		else if (Roll < Persona.BlockChance + Persona.EvadeReactChance)
 		{
 			StartEvade(ToBossDir, Now);
 		}
@@ -344,6 +377,20 @@ void UAutoHeroComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 		PunishUntil = Now + PunishWindow;   // counter persona's opening
 	}
 	bBossWasSwinging = bSwinging;
+
+	// ── Block hold: stay guarded until the timer expires, then release and
+	//    commit to nothing else this frame (blocking is a committed stance). ──
+	if (bBlockingNow)
+	{
+		if (Now >= BlockUntil)
+		{
+			ReleaseBlock();
+		}
+		else
+		{
+			return;
+		}
+	}
 
 	// While a dodge roll plays, root motion owns movement entirely.
 	if (Combat && Combat->IsDodging())

@@ -78,7 +78,13 @@ FRLObservation UStateObservationComponent::CollectObservation()
 
 	Obs.DistanceToHero = ToHero.Size() / 1000.0f; // Normalize to ~meters
 	const FVector BossForward = BossActor->GetActorForwardVector();
-	Obs.AngleToHero = FMath::Acos(FVector::DotProduct(BossForward, ToHero.GetSafeNormal())) / PI;
+	// SIGNED bearing in [-1,1]: negative = hero on the boss's left, positive = right.
+	// (Acos was unsigned [0,1] — left and right collapsed to the same value, so the
+	// policy could never tell which way to turn/aim.) atan2(cross.Z, dot) / PI.
+	const FVector ToHeroDir = ToHero.GetSafeNormal();
+	const float DotF = FVector::DotProduct(BossForward, ToHeroDir);
+	const float CrossZ = FVector::CrossProduct(BossForward, ToHeroDir).Z;
+	Obs.AngleToHero = FMath::Atan2(CrossZ, DotF) / PI;
 
 	// Boss health
 	UCombatComponent* BossCombat = FindCombatComponent(BossActor);

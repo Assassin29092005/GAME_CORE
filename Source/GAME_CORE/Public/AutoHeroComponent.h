@@ -26,10 +26,18 @@ struct FAutoHeroPersona
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AutoHero")
 	float PreferredRange = 300.0f;
 
-	/** 0-1: chance to dash sideways/back when the boss starts its attack montage.
-	 *  (Becomes a real dodge once guide.md 1.3 adds RequestDodge.) */
+	/** 0-1: chance to dash sideways/back when the boss starts its attack montage. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AutoHero")
 	float EvadeReactChance = 0.3f;
+
+	/** 0-1: chance to raise block (instead of dodging) when the boss starts a swing.
+	 *  Rolled against before the evade roll, so a turtle persona favours guarding. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AutoHero")
+	float BlockChance = 0.2f;
+
+	/** How long (s) the bot holds the guard once it raises block. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AutoHero")
+	float BlockHoldDuration = 0.8f;
 
 	/** 0-1: chance per decision to buffer the next combo step while attacking. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AutoHero")
@@ -86,9 +94,11 @@ public:
 	FString PersonaName = TEXT("custom");
 
 	/** Max distance (cm) at which RequestAttack is worth pressing.
-	 *  ANS_DealDamage reaches ~200 (offset 120 + radius 80); slack for warp. */
+	 *  Matches the hand-socket trace reach (hand bone extends ~80cm from the
+	 *  actor center at peak + 30cm radius = ~110cm; +50cm slack for the swing
+	 *  startup window where the bot would otherwise stutter). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AutoHero")
-	float AttackRange = 230.0f;
+	float AttackRange = 160.0f;
 
 	/** Rotate the pawn to face the boss while botting (PostPhysics, same
 	 *  pattern as BossActionComponent) so attack traces actually connect. */
@@ -120,6 +130,8 @@ private:
 	void TryAttack(float Dist, double Now);
 	void ApplyMovement(const FVector& ToBossDir, float DeltaTime);
 	void StartEvade(const FVector& ToBossDir, double Now);
+	void StartBlock(double Now);
+	void ReleaseBlock();
 
 	/** Route a world-space move direction into the pawn — Enhanced Input
 	 *  injection when MoveAction is set, AddMovementInput otherwise. */
@@ -144,6 +156,10 @@ private:
 	double EvadeUntil = 0.0;
 	FVector EvadeDir = FVector::ZeroVector;
 	bool bEvadeRolledThisSwing = false;
+
+	// Block hold state
+	bool bBlockingNow = false;
+	double BlockUntil = 0.0;
 
 	// Counter persona: punish window after a boss swing ends
 	bool bBossWasSwinging = false;

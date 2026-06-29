@@ -46,8 +46,19 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BossAction|Movement")
 	float RetreatSpeed = 300.0f;
 
+	/** Short on purpose: the RL bridge issues a new action every ~0.1-0.3s, so a
+	 *  long move burst gets overwritten mid-stride (direction flips -> jitter).
+	 *  Keep this near the bridge cadence so each move is a clean short impulse. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BossAction|Movement")
-	float MoveDuration = 0.5f;
+	float MoveDuration = 0.2f;
+
+	/** Boss dodge backstep speed (cm/s) and duration (s) — code-driven displacement
+	 *  during the dodge montage, since Mover doesn't consume the montage's root motion. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BossAction|Movement")
+	float DodgeSpeed = 900.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BossAction|Movement")
+	float DodgeDuration = 0.3f;
 
 	/** How fast the boss rotates to face the hero (degrees/sec interpolation speed). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BossAction|Movement")
@@ -126,5 +137,6 @@ private:
 	FTimerHandle MoveTimerHandle;
 
 protected:
+	virtual void BeginPlay() override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 };
