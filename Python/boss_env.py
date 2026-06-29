@@ -47,7 +47,7 @@ class BossEnv(gym.Env):
         self,
         host: str = "127.0.0.1",
         port: int = 5555,
-        timeout: float = 10.0,
+        timeout: float = 60.0,  # generous: UE shader-compile/hitches can stall obs >10s
         step_delay: float = 0.066,  # ~15 Hz to match UE tick rate
         player_id: str = "default",
         cfg: dict | None = None,

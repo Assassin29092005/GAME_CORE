@@ -52,6 +52,7 @@ def make_env(cfg: dict) -> Monitor:
     env = BossEnv(
         host=env_cfg["host"],
         port=env_cfg["port"],
+        timeout=env_cfg.get("timeout", 60.0),
         step_delay=env_cfg.get("step_delay", 0.066),
         player_id=env_cfg.get("player_id", "training"),
     )
