@@ -7,7 +7,7 @@ public class GAME_CORE : ModuleRules
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
         PublicDependencyModuleNames.AddRange(new string[] {
             "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput",
-            "MotionWarping",
+            "MotionWarping", "Mover",
             "Sockets", "Networking", "Json", "JsonUtilities"
         });
     }
