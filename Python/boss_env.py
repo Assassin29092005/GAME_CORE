@@ -10,6 +10,7 @@ Supports dynamic observation augmentation:
 
 import json
 import socket
+import threading
 import time
 
 import gymnasium as gym
@@ -51,6 +52,7 @@ class BossEnv(gym.Env):
         step_delay: float = 0.066,  # ~15 Hz to match UE tick rate
         player_id: str = "default",
         cfg: dict | None = None,
+        heartbeat_interval: float = 0.0,  # >0: no-op {"action": -1} keeps the C++ watchdog fed
     ):
         super().__init__()
 
@@ -60,6 +62,7 @@ class BossEnv(gym.Env):
         self.step_delay = step_delay
         self.player_id = player_id
         self._cfg = cfg or {}
+        self.heartbeat_interval = heartbeat_interval
 
         # --- Determine observation size from config flags ---
         self._irl_enabled = self._cfg.get("irl", {}).get("enabled", False)
@@ -100,6 +103,26 @@ class BossEnv(gym.Env):
         self._max_steps = 2000
         self._last_hero_action: int | None = None  # for world model training
 
+        # Action mask + bridge telemetry (valid pre-reset: safe all-ones default)
+        self._last_action_mask = np.ones(5, dtype=bool)
+        self._last_exec = -1
+        self._last_dropped = 0
+        self._last_busy = 0
+
+        # Heartbeat plumbing (thread only started when heartbeat_interval > 0)
+        self._send_lock = threading.Lock()
+        self._last_send_time = time.monotonic()
+        self._hb_stop = threading.Event()
+        self._hb_thread: threading.Thread | None = None
+
+    def action_masks(self) -> np.ndarray:
+        """Legal-action mask for the CURRENT observation (bool, shape (5,)).
+
+        Consumed by MaskablePPO via ActionMasker; half-step stale by design
+        (C++ ApplyActionMask re-checks at dispatch).
+        """
+        return self._last_action_mask.copy()
+
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         self._connect()
@@ -120,6 +143,12 @@ class BossEnv(gym.Env):
 
     def step(self, action: int):
         self._steps += 1
+
+        # Mask the policy actually sampled `action` under (the previous
+        # observation's mask) — _receive_observation below overwrites
+        # _last_action_mask with the NEW obs's mask, so capture it first.
+        # Exposed as info["action_mask_pre"] for legality metrics.
+        pre_mask = self._last_action_mask.copy()
 
         # Send action to UE5
         self._send({"action": int(action)})
@@ -148,6 +177,11 @@ class BossEnv(gym.Env):
             "boss_hp": boss_hp,
             "hero_hp": hero_hp,
             "steps": self._steps,
+            "action_mask": self._last_action_mask.copy(),
+            "action_mask_pre": pre_mask,
+            "exec_action": self._last_exec,
+            "dropped_actions": self._last_dropped,
+            "busy": self._last_busy,
         }
 
         # Include hero action for world model training data
@@ -210,32 +244,90 @@ class BossEnv(gym.Env):
             except OSError:
                 pass
 
-        self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._socket.settimeout(self.timeout)
-        self._socket.connect((self.host, self.port))
+        # Retry loop: mitigates the reset-reconnect race where UE is still
+        # tearing down the previous client socket when we come back.
+        backoffs = [0.5, 1.0]
+        for attempt in range(3):
+            self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self._socket.settimeout(self.timeout)
+            try:
+                self._socket.connect((self.host, self.port))
+                break
+            except ConnectionRefusedError:
+                self._socket.close()
+                self._socket = None
+                if attempt >= 2:
+                    raise
+                time.sleep(backoffs[attempt])
         self._buffer = ""
 
+        # Start heartbeat thread once (daemon; survives across reconnects
+        # since _send always targets the current socket).
+        if self.heartbeat_interval > 0 and self._hb_thread is None:
+            self._hb_thread = threading.Thread(
+                target=self._heartbeat_loop, daemon=True
+            )
+            self._hb_thread.start()
+
+    def _heartbeat_loop(self):
+        """Send a no-op {"action": -1} after heartbeat_interval s of send silence.
+
+        No reply, no dispatch: ExecuteAction refreshes the C++ 45s connected
+        watchdog before rejecting -1 as out-of-range (G4), so learn()/
+        checkpoint pauses can't trip the watchdog. UE logs one benign
+        "Invalid action index" warning per beat.
+        """
+        while not self._hb_stop.wait(self.heartbeat_interval / 4):
+            if time.monotonic() - self._last_send_time >= self.heartbeat_interval:
+                try:
+                    self._send({"action": -1})
+                except OSError:
+                    pass
+
     def _send(self, data: dict):
-        """Send JSON message to UE5."""
+        """Send JSON message to UE5 (lock: heartbeat thread shares the socket)."""
         if not self._socket:
             raise ConnectionError("Not connected to UE5")
         msg = json.dumps(data) + "\n"
-        self._socket.sendall(msg.encode("utf-8"))
+        with self._send_lock:
+            self._socket.sendall(msg.encode("utf-8"))
+            self._last_send_time = time.monotonic()
 
     def _receive_observation(self) -> np.ndarray:
         """Receive and parse observation JSON from UE5, with dynamic augmentation."""
         if not self._socket:
             raise ConnectionError("Not connected to UE5")
 
-        # Read until we get a complete line
-        while "\n" not in self._buffer:
-            chunk = self._socket.recv(4096).decode("utf-8")
-            if not chunk:
-                raise ConnectionError("UE5 disconnected")
-            self._buffer += chunk
+        # Read complete lines; skip unsolicited SendReward payloads — a bare
+        # {"reward": ...} line would otherwise parse as an all-zero obs.
+        while True:
+            while "\n" not in self._buffer:
+                chunk = self._socket.recv(4096).decode("utf-8")
+                if not chunk:
+                    raise ConnectionError("UE5 disconnected")
+                self._buffer += chunk
 
-        line, self._buffer = self._buffer.split("\n", 1)
-        data = json.loads(line)
+            line, self._buffer = self._buffer.split("\n", 1)
+            data = json.loads(line)
+            if "reward" in data and "boss_hp" not in data:
+                continue  # not an observation — wait for the next line
+            break
+
+        # Legal-action mask (G5): 5 ints, index = EBossAction. Absent /
+        # malformed / all-zero → all-ones (all-zero would crash MaskablePPO).
+        raw = data.get("mask")
+        if isinstance(raw, (list, tuple)) and len(raw) == 5:
+            mask = np.asarray(raw, dtype=bool)
+        else:
+            mask = np.ones(5, dtype=bool)
+        if not mask.any():
+            mask = np.ones(5, dtype=bool)
+        self._last_action_mask = mask
+
+        # Forward-compat bridge telemetry (G6): absent until the C++ pass lands.
+        self._last_exec = int(data.get("exec", -1))
+        self._last_dropped = int(data.get("dropped", 0))
+        self._last_busy = int(data.get("busy", 0))
 
         # Parse into observation vector
         obs = np.zeros(self.OBS_SIZE, dtype=np.float32)
@@ -312,6 +404,7 @@ class BossEnv(gym.Env):
             self._irl_model = None
 
     def close(self):
+        self._hb_stop.set()
         if self._socket:
             try:
                 self._socket.close()

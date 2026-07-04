@@ -68,11 +68,25 @@ class MamlPolicy(nn.Module):
         logits, _ = self.forward(obs)
         return torch.distributions.Categorical(logits=logits)
 
-    def predict(self, obs: np.ndarray, deterministic: bool = True) -> int:
-        """Single observation prediction (numpy in/out)."""
+    def predict(
+        self,
+        obs: np.ndarray,
+        deterministic: bool = True,
+        action_mask: np.ndarray | None = None,
+    ) -> int:
+        """Single observation prediction (numpy in/out).
+
+        action_mask: optional bool (num_actions,) legality mask — illegal
+        logits are pushed to -1e9 before argmax/sampling (I6). Absent or
+        all-false masks fall back to unmasked prediction.
+        """
         obs_t = torch.FloatTensor(obs).unsqueeze(0)
         with torch.no_grad():
             logits, _ = self.forward(obs_t)
+        if action_mask is not None:
+            m = torch.as_tensor(np.asarray(action_mask, dtype=bool))
+            if m.shape[-1] == self.num_actions and m.any():
+                logits = logits.masked_fill(~m, -1e9)
         if deterministic:
             return int(torch.argmax(logits, dim=-1).item())
         else:

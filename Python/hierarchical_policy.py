@@ -10,6 +10,7 @@ from stable_baselines3 import PPO
 
 from boss_env import BossEnv
 from hierarchical_env import HierarchicalBossEnv, StrategistEnv, NUM_STRATEGIES
+from rl_algo import load_checkpoint_auto
 from strategy_reward import STRATEGY_NAMES
 
 
@@ -37,21 +38,36 @@ class HierarchicalAgent:
         self._strategy_onehot = np.zeros(NUM_STRATEGIES, dtype=np.float32)
         self._strategy_onehot[0] = 1.0
 
+        self._tactician_maskable = False
+
         if strategist_path and os.path.exists(strategist_path):
+            # Strategist is always plain PPO (Discrete(4), never masked).
             self.strategist = PPO.load(strategist_path)
             print(f"Loaded strategist from {strategist_path}")
 
         if tactician_path and os.path.exists(tactician_path):
-            self.tactician = PPO.load(tactician_path)
-            print(f"Loaded tactician from {tactician_path}")
+            # Auto-detect legacy PPO vs MaskablePPO tactician checkpoints.
+            self.tactician, self._tactician_maskable = load_checkpoint_auto(
+                tactician_path
+            )
+            kind = "MaskablePPO" if self._tactician_maskable else "legacy PPO"
+            print(f"Loaded {kind} tactician from {tactician_path}")
 
-    def predict(self, obs: np.ndarray, deterministic: bool = True) -> tuple[int, dict]:
+    def predict(
+        self,
+        obs: np.ndarray,
+        deterministic: bool = True,
+        action_masks: np.ndarray | None = None,
+    ) -> tuple[int, dict]:
         """
         Full hierarchical prediction.
 
         Args:
             obs: 17-dim base observation from BossEnv
             deterministic: if True, use greedy action selection
+            action_masks: optional bool (5,) legality mask from BossEnv.
+                Consumed by a MaskablePPO tactician; a plain tactician
+                ignores it (C++ ApplyActionMask stays the legality net).
 
         Returns:
             (action_index, info_dict) where action_index is 0-4
@@ -77,9 +93,23 @@ class HierarchicalAgent:
 
         # Get tactical action
         if self.tactician is not None:
-            action, _ = self.tactician.predict(augmented_obs, deterministic=deterministic)
+            if self._tactician_maskable and action_masks is not None:
+                action, _ = self.tactician.predict(
+                    augmented_obs,
+                    deterministic=deterministic,
+                    action_masks=action_masks,
+                )
+            else:
+                action, _ = self.tactician.predict(
+                    augmented_obs, deterministic=deterministic
+                )
         else:
-            action = np.random.randint(0, 5)
+            # No-model fallback: legal-only random.
+            if action_masks is not None and np.asarray(action_masks).any():
+                legal = np.flatnonzero(action_masks)
+            else:
+                legal = np.arange(5)
+            action = int(np.random.choice(legal))
 
         self._steps_since_strategy += 1
 

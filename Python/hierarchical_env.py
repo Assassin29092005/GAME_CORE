@@ -65,21 +65,28 @@ class HierarchicalBossEnv(gym.Wrapper):
 
     def step(self, action):
         action = int(action)
-        self._action_history.append(action)
-
-        # Keep action history bounded
-        if len(self._action_history) > 100:
-            self._action_history = self._action_history[-50:]
 
         obs, reward, terminated, truncated, info = self.env.step(action)
 
-        # Add strategy-specific reward shaping
+        # Add strategy-specific reward shaping. The reward is computed BEFORE
+        # appending `action` to the history so history[-1] is the PREVIOUS
+        # action — Hit-and-Run / Counter sequence bonuses key off it.
         if self._prev_obs is not None:
+            reward_kwargs = {}
+            u = self.env.unwrapped
+            if getattr(u, "_emotion_enabled", False):
+                es = u._emotion_start
+                reward_kwargs["emotion_scores"] = tuple(obs[es:es + 3])
             strategy_bonus = compute_strategy_reward(
                 self.current_strategy, obs, action, self._prev_obs,
                 action_history=self._action_history,
+                **reward_kwargs,
             )
             reward += strategy_bonus * self.strategy_reward_weight
+
+        self._action_history.append(action)
+        if len(self._action_history) > 100:
+            self._action_history = self._action_history[-50:]
 
         self._prev_obs = obs.copy()
         self.steps_since_strategy += 1
@@ -88,6 +95,14 @@ class HierarchicalBossEnv(gym.Wrapper):
         info["strategy_name"] = STRATEGY_NAMES.get(self.current_strategy, "Unknown")
 
         return self._augment_obs(obs), reward, terminated, truncated, info
+
+    def action_masks(self) -> np.ndarray:
+        """Tactic-level mask pass-through — this wrapper doesn't remap actions,
+        so the base env's mask applies 1:1. Explicit unwrapped lookup because
+        gymnasium 1.2.x dropped wrapper attribute forwarding."""
+        u = self.env.unwrapped
+        f = getattr(u, "action_masks", None)
+        return f() if callable(f) else np.ones(5, dtype=bool)
 
     def set_strategy(self, strategy_id: int):
         """Set the current high-level strategy. Called by the strategist."""
@@ -127,6 +142,13 @@ class StrategistEnv(gym.Env):
         self.hier_env = hierarchical_env
         self.tactician = tactician_model
 
+        # Compute once whether the (frozen) tactician consumes action masks.
+        try:
+            from sb3_contrib import MaskablePPO
+            self._tactician_maskable = isinstance(tactician_model, MaskablePPO)
+        except ImportError:
+            self._tactician_maskable = False
+
         # Strategist sees base observation only
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf,
@@ -157,7 +179,12 @@ class StrategistEnv(gym.Env):
         for _ in range(self.hier_env.strategy_interval):
             # Get augmented observation for tactician
             aug_obs = self.hier_env._augment_obs(self._current_obs)
-            tac_action, _ = self.tactician.predict(aug_obs, deterministic=False)
+            mask_kwargs = {}
+            if self._tactician_maskable:
+                mask_kwargs = {"action_masks": self.hier_env.action_masks()}
+            tac_action, _ = self.tactician.predict(
+                aug_obs, deterministic=False, **mask_kwargs
+            )
 
             aug_obs, reward, terminated, truncated, info = self.hier_env.step(int(tac_action))
             self._current_obs = self.hier_env.get_base_obs(aug_obs)

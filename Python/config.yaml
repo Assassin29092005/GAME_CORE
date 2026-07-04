@@ -9,9 +9,19 @@ env:
   max_steps: 2000
   observation_size: 17  # 9 base + 8 player profile
   player_id: "default"
+  heartbeat_interval: 0.0  # >0: daemon thread sends a no-op {"action": -1} after N s of send
+                           # silence so the C++ connected-watchdog (45s) can't fire during
+                           # MaskablePPO learn()/checkpoint pauses. Brief-measured margin is
+                           # >=3x at n_steps=2048, so OFF by default; enable (e.g. 20.0) if
+                           # n_steps grows or the laptop throttles. -1 refreshes the watchdog
+                           # in ExecuteAction but is rejected as out-of-range: no dispatch, no reply.
 
 training:
-  algorithm: "PPO"
+  algorithm: "MaskablePPO" # "MaskablePPO" (sb3-contrib; consumes the "mask" obs field) or
+                           # "PPO" (legacy, mask ignored; old checkpoints resume/infer fine).
+  device: "cpu"            # explicit — MlpPolicy is faster on CPU and SB3 warns on cuda.
+  seed: null               # int => seeds SB3 (torch/np/random + action_space); NOTE: the live
+                           # UE env is not reproducible; this pins net init + sampling only.
   total_timesteps: 500000
   learning_rate: 0.0003
   batch_size: 64
@@ -77,6 +87,11 @@ transfer:
   fine_tune_steps_per_episode: 50000
   min_episodes_for_base: 5
   record_replays: true           # write replays/{player_id}/episode_NNNN.npz during train.py runs
+
+# WARNING: flipping irl.enabled / emotion.enabled changes OBS_SIZE (17 -> +5/+3) —
+# existing checkpoints stop loading; retrain or keep flags as trained. emotion
+# currently arrives as constant zeros from C++ (dead stub) — leave false until
+# the C++ pass wires EmotionEstimationComponent.
 
 # --- Extension 8: Inverse RL Player Modeling ---
 irl:

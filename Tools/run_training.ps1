@@ -8,8 +8,8 @@
 # Usage (from anywhere):
 #   powershell -ExecutionPolicy Bypass -File "D:\GAME_CORE 5.8\Tools\run_training.ps1"
 #   ... -MapName Arena            # optional: level to load (omit = project default map)
-#   ... -Persona rusher           # optional: forwarded as -AutoHero=<persona> once
-#                                 #   the AutoHeroComponent exists (M1) -- harmless before
+#   ... -Persona rusher           # optional: forwarded as -AutoHero=<persona> to drive the
+#                                 #   AutoHeroComponent sparring bot (rusher/turtle/kiter/counter/chaotic)
 #   ... -TrainScript train.py     # or train_hierarchical.py etc.
 #   ... -MaxRestarts 50
 #

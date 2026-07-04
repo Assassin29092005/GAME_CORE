@@ -13,7 +13,9 @@ import argparse
 
 import yaml
 
+from maml_data_utils import infer_obs_dim
 from maml_trainer import MAMLTrainer
+from replay_buffer_manager import ReplayBufferManager
 
 
 def load_config(path: str) -> dict:
@@ -21,11 +23,21 @@ def load_config(path: str) -> dict:
         return yaml.safe_load(f)
 
 
+def _data_obs_dim(cfg: dict, replay_dir: str) -> int:
+    """Obs dim from replay data (G8: offline trainers derive dims from data,
+    never live config — irl/emotion toggles change the live obs size)."""
+    dim = infer_obs_dim(ReplayBufferManager(replay_dir))
+    if dim is None:
+        dim = cfg.get("env", {}).get("observation_size", 17)
+        print(f"No replay data found — falling back to config obs_dim={dim}")
+    return dim
+
+
 def train_meta(cfg: dict):
     """Run MAML meta-training on all available player data."""
     maml_cfg = cfg.get("maml", {})
     replay_dir = cfg.get("transfer", {}).get("replay_dir", "./replays")
-    obs_dim = cfg.get("env", {}).get("observation_size", 17)
+    obs_dim = _data_obs_dim(cfg, replay_dir)
 
     trainer = MAMLTrainer(
         obs_dim=obs_dim,
@@ -69,7 +81,8 @@ def adapt_player(cfg: dict, player_id: str):
     """Adapt meta-model to a specific player and report results."""
     maml_cfg = cfg.get("maml", {})
     replay_dir = cfg.get("transfer", {}).get("replay_dir", "./replays")
-    obs_dim = cfg.get("env", {}).get("observation_size", 17)
+    # Initial value only — load_meta_model rebuilds from checkpoint dims (G8).
+    obs_dim = _data_obs_dim(cfg, replay_dir)
 
     trainer = MAMLTrainer(
         obs_dim=obs_dim,
@@ -110,7 +123,8 @@ def evaluate_player(cfg: dict, player_id: str):
     """Evaluate adaptation quality at each inner step."""
     maml_cfg = cfg.get("maml", {})
     replay_dir = cfg.get("transfer", {}).get("replay_dir", "./replays")
-    obs_dim = cfg.get("env", {}).get("observation_size", 17)
+    # Initial value only — load_meta_model rebuilds from checkpoint dims (G8).
+    obs_dim = _data_obs_dim(cfg, replay_dir)
 
     trainer = MAMLTrainer(
         obs_dim=obs_dim,
@@ -152,7 +166,6 @@ def show_stats(cfg: dict):
     maml_cfg = cfg.get("maml", {})
     min_episodes = maml_cfg.get("min_episodes_per_player", 3)
 
-    from replay_buffer_manager import ReplayBufferManager
     mgr = ReplayBufferManager(replay_dir)
 
     players = mgr.list_players()

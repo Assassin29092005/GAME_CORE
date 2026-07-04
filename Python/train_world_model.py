@@ -27,7 +27,6 @@ def train_world_model(cfg: dict):
     wm_cfg = cfg.get("world_model", {})
     replay_dir = cfg.get("transfer", {}).get("replay_dir", "./replays")
 
-    obs_dim = cfg.get("env", {}).get("observation_size", 17)
     hidden_size = wm_cfg.get("hidden_size", 128)
     lr = wm_cfg.get("learning_rate", 0.001)
     epochs = wm_cfg.get("train_epochs", 50)
@@ -35,7 +34,7 @@ def train_world_model(cfg: dict):
     model_dir = wm_cfg.get("model_dir", "./models/world_model")
 
     print("=== World Model Training ===")
-    print(f"  Obs dim: {obs_dim}, Hidden: {hidden_size}, LR: {lr}")
+    print(f"  Hidden: {hidden_size}, LR: {lr}")
     print(f"  Epochs: {epochs}, Batch size: {batch_size}")
 
     # Load replay data
@@ -52,6 +51,11 @@ def train_world_model(cfg: dict):
     if not all_episodes:
         print("ERROR: No replay data found. Record replays first.")
         return
+
+    # Obs dim comes from the data, not live config (G8) — irl/emotion
+    # toggles change the live obs size and would silently mismatch replays.
+    obs_dim = int(all_episodes[0]["obs"].shape[1])
+    print(f"  Obs dim (from replay data): {obs_dim}")
 
     # Split train/test
     n_test = max(1, len(all_episodes) // 10)
@@ -101,7 +105,6 @@ def evaluate_world_model(cfg: dict):
     """Evaluate a trained world model on replay data."""
     wm_cfg = cfg.get("world_model", {})
     replay_dir = cfg.get("transfer", {}).get("replay_dir", "./replays")
-    obs_dim = cfg.get("env", {}).get("observation_size", 17)
     hidden_size = wm_cfg.get("hidden_size", 128)
     model_dir = wm_cfg.get("model_dir", "./models/world_model")
     model_path = os.path.join(model_dir, "world_model.pt")
@@ -110,12 +113,7 @@ def evaluate_world_model(cfg: dict):
         print(f"ERROR: No model found at {model_path}. Train first.")
         return
 
-    # Load model
-    model = WorldModel(obs_dim=obs_dim, hidden_size=hidden_size)
-    model.load_state_dict(torch.load(model_path, weights_only=True))
-    model.eval()
-
-    # Load replay data
+    # Load replay data first — obs dim is derived from the data (G8).
     replay_mgr = ReplayBufferManager(replay_dir)
     all_episodes = []
     for player_id in replay_mgr.list_players():
@@ -124,6 +122,13 @@ def evaluate_world_model(cfg: dict):
     if not all_episodes:
         print("ERROR: No replay data found.")
         return
+
+    obs_dim = int(all_episodes[0]["obs"].shape[1])
+
+    # Load model
+    model = WorldModel(obs_dim=obs_dim, hidden_size=hidden_size)
+    model.load_state_dict(torch.load(model_path, weights_only=True))
+    model.eval()
 
     trainer = WorldModelTrainer(model)
     metrics = trainer.evaluate(all_episodes)

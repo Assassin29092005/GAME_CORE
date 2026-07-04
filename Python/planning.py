@@ -57,26 +57,40 @@ class BossPlanner:
         self.top_k = top_k_player_actions
         self.discount = discount
 
-    def plan(self, obs: np.ndarray) -> int:
+    def plan(self, obs: np.ndarray, action_mask: np.ndarray | None = None) -> int:
         """
         Select the best boss action via lookahead planning.
 
+        Masking applies at the planning ROOT only (G7): simulated future
+        states assume all-legal, because a mask is not derivable from a
+        predicted observation.
+
         Args:
             obs: Current observation (base 17-dim, not augmented)
+            action_mask: optional bool (5,) legality mask for the root step
 
         Returns:
             Best boss action index (0-4)
         """
-        best_action = 0
+        candidates = self._root_actions(action_mask)
+        best_action = int(candidates[0])
         best_value = float("-inf")
 
-        for boss_action in range(self.num_boss_actions):
+        for boss_action in candidates:
             value = self.evaluate_action(obs, boss_action, depth=self.lookahead_depth)
             if value > best_value:
                 best_value = value
-                best_action = boss_action
+                best_action = int(boss_action)
 
         return best_action
+
+    def _root_actions(self, action_mask: np.ndarray | None) -> list[int]:
+        """Legal root candidates; all actions when the mask is absent/degenerate."""
+        if action_mask is not None:
+            mask = np.asarray(action_mask, dtype=bool)
+            if mask.shape == (self.num_boss_actions,) and mask.any():
+                return [int(a) for a in np.flatnonzero(mask)]
+        return list(range(self.num_boss_actions))
 
     def evaluate_action(
         self, obs: np.ndarray, boss_action: int, depth: int
@@ -133,18 +147,21 @@ class BossPlanner:
 
         return expected_value
 
-    def plan_with_info(self, obs: np.ndarray) -> dict:
+    def plan_with_info(
+        self, obs: np.ndarray, action_mask: np.ndarray | None = None
+    ) -> dict:
         """
-        Plan with detailed debug information.
+        Plan with detailed debug information. Mask applies at the root only
+        (see plan()); 'values' covers legal root actions only.
 
         Returns:
-            Dict with 'action', 'values' (per action), 'player_probs',
+            Dict with 'action', 'values' (per legal action), 'player_probs',
             and 'best_value'.
         """
         action_values = {}
         player_probs = self._get_player_action_probs(obs)
 
-        for boss_action in range(self.num_boss_actions):
+        for boss_action in self._root_actions(action_mask):
             action_values[boss_action] = self.evaluate_action(
                 obs, boss_action, depth=self.lookahead_depth
             )

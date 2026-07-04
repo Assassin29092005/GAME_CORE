@@ -1,0 +1,16 @@
+# Working set verified on the dev machine (Python 3.10+, Windows).
+# sb3-contrib and stable-baselines3 minors MUST match (contrib 2.9 requires
+# SB3 >=2.9,<3.0) — config.yaml defaults training.algorithm to MaskablePPO,
+# which needs sb3-contrib.
+gymnasium==1.2.3
+stable-baselines3==2.9.0
+sb3-contrib==2.9.0
+torch==2.10.0
+numpy==2.4.3
+pyyaml
+tensorboard
+# export_onnx.py: torch's TorchScript ONNX exporter hard-requires the onnx
+# package even with dynamo=False.
+onnx
+# Optional — enables export_onnx.py's ONNX-runtime agreement check:
+# onnxruntime

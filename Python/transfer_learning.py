@@ -9,6 +9,7 @@ from pathlib import Path
 from stable_baselines3 import PPO
 
 from replay_buffer_manager import ReplayBufferManager
+from rl_algo import load_checkpoint_auto
 
 
 class TransferLearningManager:
@@ -49,10 +50,14 @@ class TransferLearningManager:
     def has_player_model(self, player_id: str) -> bool:
         return self.player_model_path(player_id).exists()
 
-    def train_base_model(self, env, total_timesteps: int = 1000000, **ppo_kwargs) -> PPO:
+    def train_base_model(self, env, total_timesteps: int = 1000000,
+                         algo_cls=None, **ppo_kwargs) -> PPO:
         """
         Train a base model from scratch using the provided environment.
         The base model learns general boss behavior across all players.
+
+        algo_cls: PPO (default) or MaskablePPO — pass the class resolved from
+        training.algorithm so the base/player checkpoints match config.
 
         In practice, this should be called after collecting replay data from
         multiple players. The env should wrap aggregated replay data or
@@ -73,7 +78,8 @@ class TransferLearningManager:
         }
         default_kwargs.update(ppo_kwargs)
 
-        model = PPO("MlpPolicy", env, **default_kwargs)
+        algo_cls = algo_cls or PPO
+        model = algo_cls("MlpPolicy", env, **default_kwargs)
         model.learn(total_timesteps=total_timesteps)
 
         self.base_model_dir.mkdir(parents=True, exist_ok=True)
@@ -82,10 +88,13 @@ class TransferLearningManager:
 
         return model
 
-    def load_player_model(self, player_id: str, env=None) -> tuple[PPO, bool]:
+    def load_player_model(self, player_id: str, env=None,
+                          device: str = "cpu") -> tuple[PPO, bool]:
         """
         Load per-player fine-tuned model. If none exists, copies base model.
         If no base model exists, returns None.
+
+        Legacy PPO and MaskablePPO zips both load (sniffed via rl_algo, G3).
 
         Returns:
             (model, is_new_player) — is_new_player is True if starting from base
@@ -93,13 +102,19 @@ class TransferLearningManager:
         player_path = self.player_model_path(player_id)
 
         if player_path.exists():
-            model = PPO.load(str(player_path.with_suffix("")), env=env)
-            print(f"Loaded player model for '{player_id}'")
+            model, mask_aware = load_checkpoint_auto(
+                str(player_path), env=env, device=device
+            )
+            kind = "MaskablePPO" if mask_aware else "legacy PPO"
+            print(f"Loaded {kind} player model for '{player_id}'")
             return model, False
 
         if self.has_base_model():
-            model = PPO.load(str(self.base_model_path.with_suffix("")), env=env)
-            print(f"New player '{player_id}' — initialized from base model")
+            model, mask_aware = load_checkpoint_auto(
+                str(self.base_model_path), env=env, device=device
+            )
+            kind = "MaskablePPO" if mask_aware else "legacy PPO"
+            print(f"New player '{player_id}' — initialized from {kind} base model")
             return model, True
 
         print(f"No base model or player model for '{player_id}'")

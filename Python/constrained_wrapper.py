@@ -74,13 +74,28 @@ class ConstrainedBossEnv(gym.Wrapper):
         self._hp_lead_changes = 0
         return obs, info
 
+    def action_masks(self) -> np.ndarray:
+        """Pass-through to the base env's mask (explicit unwrapped lookup —
+        gymnasium 1.2.x wrappers no longer forward attributes)."""
+        u = self.env.unwrapped
+        f = getattr(u, "action_masks", None)
+        return f() if callable(f) else np.ones(self.action_space.n, dtype=bool)
+
     def step(self, action):
         # Dynamic incompetence: sometimes replace optimal action
+        substituted = False
         effective_epsilon = self.current_epsilon
         if np.random.random() < effective_epsilon:
-            action = self._suboptimal_action(int(action))
+            new_action = self._suboptimal_action(int(action))
+            substituted = new_action != int(action)
+            action = new_action
 
         obs, reward, terminated, truncated, info = self.env.step(action)
+
+        # I2: always present, measurable via bridge/epsilon_subst_rate.
+        # Known off-policy smell: the rollout buffer stores the
+        # pre-substitution action — accepted, now at least observable.
+        info["epsilon_substituted"] = substituted
 
         # Add engagement reward
         reward += self._engagement_reward(obs)
@@ -116,8 +131,19 @@ class ConstrainedBossEnv(gym.Wrapper):
         return obs, reward, terminated, truncated, info
 
     def _suboptimal_action(self, optimal_action: int) -> int:
-        """Replace optimal action with a contextually reasonable but weaker one."""
-        alternatives = [a for a in range(self.action_space.n) if a != optimal_action]
+        """Replace optimal action with a weaker but LEGAL one.
+
+        Epsilon samples from legal \\ {chosen}; if that set is empty the
+        original action is kept — never reintroduce an illegal action the
+        mask just filtered out (bridge desync risk).
+        """
+        mask = self.action_masks()
+        alternatives = [
+            a for a in range(self.action_space.n)
+            if a != optimal_action and mask[a]
+        ]
+        if not alternatives:
+            return int(optimal_action)
         return int(np.random.choice(alternatives))
 
     def _engagement_reward(self, obs: np.ndarray) -> float:

@@ -272,8 +272,37 @@ class MAMLTrainer:
         }, save_dir / "meta_model.pt")
 
     def load_meta_model(self, path: str):
-        """Load meta-model from disk."""
+        """Load meta-model from disk.
+
+        The checkpoint is authoritative for network dims (G8) — if it was
+        trained with a different obs_dim/hidden_size than this trainer was
+        constructed with, the policy (and optimizer) are rebuilt to match.
+        """
         checkpoint = torch.load(
             Path(path) / "meta_model.pt", weights_only=True
         )
+
+        ckpt_obs_dim = int(checkpoint.get("obs_dim", self.obs_dim))
+        ckpt_num_actions = int(checkpoint.get("num_actions", self.num_actions))
+        ckpt_hidden = int(checkpoint.get("hidden_size", self.hidden_size))
+
+        if (ckpt_obs_dim, ckpt_num_actions, ckpt_hidden) != (
+            self.obs_dim, self.num_actions, self.hidden_size
+        ):
+            print(
+                f"Meta-model dims from checkpoint: obs_dim={ckpt_obs_dim}, "
+                f"actions={ckpt_num_actions}, hidden={ckpt_hidden} "
+                f"(overriding constructor values)"
+            )
+            self.obs_dim = ckpt_obs_dim
+            self.num_actions = ckpt_num_actions
+            self.hidden_size = ckpt_hidden
+            meta_lr = self.meta_optimizer.param_groups[0]["lr"]
+            self.meta_policy = MamlPolicy(
+                self.obs_dim, self.num_actions, self.hidden_size
+            )
+            self.meta_optimizer = optim.Adam(
+                self.meta_policy.parameters(), lr=meta_lr
+            )
+
         self.meta_policy.load_state_dict(checkpoint["meta_policy"])

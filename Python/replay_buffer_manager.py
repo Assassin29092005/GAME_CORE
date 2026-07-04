@@ -5,9 +5,6 @@ Used by transfer learning, IRL training, MAML meta-training, and world model tra
 
 from __future__ import annotations
 
-import json
-import os
-from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -35,7 +32,8 @@ class ReplayBufferManager:
 
     def record_step(self, obs: np.ndarray, action: int, reward: float,
                     next_obs: np.ndarray, done: bool,
-                    player_action: int | None = None):
+                    player_action: int | None = None,
+                    mask: np.ndarray | None = None):
         """Append a step to the current episode buffer."""
         step = {
             "obs": obs.copy(),
@@ -45,7 +43,9 @@ class ReplayBufferManager:
             "done": done,
         }
         if player_action is not None:
-            step["player_action"] = player_action
+            step["player_action"] = int(player_action)
+        if mask is not None:
+            step["mask"] = np.asarray(mask, dtype=np.uint8)
         self._episode_buffer.append(step)
 
     def end_episode(self):
@@ -84,6 +84,21 @@ class ReplayBufferManager:
             )
             save_kwargs["player_actions"] = player_action_arr
 
+        # Include per-step action masks if recorded (I7, additive key).
+        # Steps missing a mask default to all-legal.
+        if any("mask" in s for s in self._episode_buffer):
+            n = 5
+            for s in self._episode_buffer:
+                if "mask" in s:
+                    n = len(s["mask"])
+                    break
+            mask_arr = np.array(
+                [s.get("mask", np.ones(n, dtype=np.uint8))
+                 for s in self._episode_buffer],
+                dtype=np.uint8,
+            )
+            save_kwargs["masks"] = mask_arr
+
         np.savez_compressed(filepath, **save_kwargs)
 
         self._episode_count += 1
@@ -111,13 +126,18 @@ class ReplayBufferManager:
         episodes = []
         for filepath in sorted(player_dir.glob("episode_*.npz")):
             data = np.load(filepath)
-            episodes.append({
+            episode = {
                 "obs": data["obs"],
                 "actions": data["actions"],
                 "rewards": data["rewards"],
                 "next_obs": data["next_obs"],
                 "dones": data["dones"],
-            })
+            }
+            # Optional additive keys (I7) — old files simply lack them.
+            for opt_key in ("player_actions", "masks"):
+                if opt_key in data.files:
+                    episode[opt_key] = data[opt_key]
+            episodes.append(episode)
         return episodes
 
     def aggregate_replays(self, min_episodes_per_player: int = 5) -> dict | None:
@@ -194,6 +214,11 @@ class ReplayBufferManager:
         Returns:
             PlayerTask with support and query arrays, or None if insufficient data
         """
+        # Deferred import (pulls torch) — same pattern as the IRL support
+        # above. maml_data_utils.PlayerTask carries to_tensors(), which
+        # MAMLTrainer calls on the tasks returned here.
+        from maml_data_utils import PlayerTask
+
         episodes = self.load_player_replays(player_id)
         if len(episodes) < 2:
             return None
@@ -247,20 +272,3 @@ class ReplayBufferManager:
             if task is not None:
                 tasks.append(task)
         return tasks
-
-
-@dataclass
-class PlayerTask:
-    """MAML task: support set (inner loop) + query set (outer loss)."""
-
-    player_id: str
-    support_obs: np.ndarray
-    support_actions: np.ndarray
-    support_rewards: np.ndarray
-    support_next_obs: np.ndarray
-    support_dones: np.ndarray
-    query_obs: np.ndarray
-    query_actions: np.ndarray
-    query_rewards: np.ndarray
-    query_next_obs: np.ndarray
-    query_dones: np.ndarray

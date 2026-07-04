@@ -122,6 +122,23 @@ def compute_gae(
     return advantages, returns
 
 
+def infer_obs_dim(replay_manager) -> int | None:
+    """
+    Derive the observation dimension from recorded replay data (G8:
+    offline trainers derive dims from data, never from live config —
+    flipping irl/emotion flags changes the live obs size and would
+    otherwise silently mismatch old replays).
+
+    Returns the obs dim of the first available episode, or None if no
+    replay data exists.
+    """
+    for player_id in replay_manager.list_players():
+        episodes = replay_manager.load_player_replays(player_id)
+        if episodes:
+            return int(episodes[0]["obs"].shape[1])
+    return None
+
+
 def replay_to_tasks(
     replay_manager,
     min_episodes: int = 3,

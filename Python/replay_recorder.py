@@ -34,12 +34,19 @@ class ReplayRecorder(gym.Wrapper):
         return obs, info
 
     def step(self, action):
+        # Capture the mask BEFORE the inner step: at this moment
+        # _last_action_mask still corresponds to self._last_obs (the obs the
+        # action was chosen from), so the (obs, mask) pairing is exact.
+        mask = getattr(self.env.unwrapped, "action_masks", lambda: None)()
+
         obs, reward, terminated, truncated, info = self.env.step(action)
         done = bool(terminated or truncated)
 
         if self._last_obs is not None:
             self._mgr.record_step(
-                self._last_obs, int(action), float(reward), obs, done
+                self._last_obs, int(action), float(reward), obs, done,
+                player_action=info.get("hero_action"),
+                mask=mask,
             )
         self._last_obs = obs
 

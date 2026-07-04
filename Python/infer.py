@@ -16,9 +16,9 @@ import argparse
 
 import numpy as np
 import yaml
-from stable_baselines3 import PPO
 
 from boss_env import BossEnv
+from rl_algo import load_checkpoint_auto
 
 
 def load_config(path: str) -> dict:
@@ -32,21 +32,25 @@ def _make_env(cfg: dict, player_id: str = "default") -> BossEnv:
     return BossEnv(
         host=env_cfg["host"],
         port=env_cfg["port"],
+        timeout=env_cfg.get("timeout", 60.0),
         step_delay=env_cfg.get("step_delay", 0.066),
         player_id=player_id,
         cfg=cfg,
+        # heartbeat stays off: the inference loop sends actions continuously
     )
 
 
 def infer_flat(cfg: dict, model_path: str, deterministic: bool = True,
                player_id: str = "default"):
-    """Standard flat PPO inference."""
+    """Standard flat PPO / MaskablePPO inference."""
     env = _make_env(cfg, player_id)
 
-    model = PPO.load(model_path, env=env)
-    print(f"Loaded PPO model from {model_path}")
+    # Legacy branch (mask_aware False): predict unchanged, C++ ApplyActionMask
+    # remains the legality net — old checkpoints keep working as-is.
+    model, mask_aware = load_checkpoint_auto(model_path, env=env, device="cpu")
+    print(f"Loaded {'MaskablePPO' if mask_aware else 'legacy PPO'} model from {model_path}")
 
-    _run_inference_loop(env, model, deterministic)
+    _run_inference_loop(env, model, deterministic, use_masks=mask_aware)
 
 
 def infer_hierarchical(cfg: dict, model_dir: str, deterministic: bool = True,
@@ -79,7 +83,10 @@ def infer_hierarchical(cfg: dict, model_dir: str, deterministic: bool = True,
             print(f"\n--- Episode {episode} ---")
 
             while not done:
-                action, agent_info = agent.predict(obs, deterministic=deterministic)
+                action, agent_info = agent.predict(
+                    obs, deterministic=deterministic,
+                    action_masks=env.action_masks(),
+                )
 
                 obs, reward, terminated, truncated, info = env.step(action)
                 total_reward += reward
@@ -131,7 +138,8 @@ def infer_transfer(cfg: dict, player_id: str, deterministic: bool = True):
     if is_new:
         print(f"Using base model for new player '{player_id}'")
 
-    _run_inference_loop(env, model, deterministic)
+    use_masks = model.__class__.__name__ == "MaskablePPO"
+    _run_inference_loop(env, model, deterministic, use_masks=use_masks)
 
 
 def infer_irl(cfg: dict, model_path: str, player_id: str = "default",
@@ -180,10 +188,10 @@ def infer_irl(cfg: dict, model_path: str, player_id: str = "default",
     # Inject the IRL model into the env
     env._irl_model = irl_model
 
-    model = PPO.load(model_path, env=env)
-    print(f"Loaded PPO model from {model_path}")
+    model, mask_aware = load_checkpoint_auto(model_path, env=env, device="cpu")
+    print(f"Loaded {'MaskablePPO' if mask_aware else 'legacy PPO'} model from {model_path}")
 
-    _run_inference_loop(env, model, deterministic)
+    _run_inference_loop(env, model, deterministic, use_masks=mask_aware)
 
 
 def infer_planning(cfg: dict, model_path: str, player_id: str = "default",
@@ -226,7 +234,8 @@ def infer_planning(cfg: dict, model_path: str, player_id: str = "default",
         world_mod.load_state_dict(torch.load(wm_path, weights_only=True))
         world_mod.eval()
 
-    model = PPO.load(model_path, env=env)
+    model, mask_aware = load_checkpoint_auto(model_path, env=env, device="cpu")
+    print(f"Loaded {'MaskablePPO' if mask_aware else 'legacy PPO'} model from {model_path}")
 
     planning_weight = wm_cfg.get("planning_weight", 0.5)
     lookahead = wm_cfg.get("lookahead_depth", 2)
@@ -243,7 +252,7 @@ def infer_planning(cfg: dict, model_path: str, player_id: str = "default",
         print("World model or IRL model not found. Using policy only.")
 
     _run_inference_loop_with_planner(
-        env, model, planner, planning_weight, deterministic
+        env, model, planner, planning_weight, deterministic, use_masks=mask_aware
     )
 
 
@@ -292,7 +301,7 @@ def infer_maml(cfg: dict, player_id: str = "default",
     _run_inference_loop_maml(env, adapted_policy, deterministic)
 
 
-def _run_inference_loop(env, model, deterministic: bool):
+def _run_inference_loop(env, model, deterministic: bool, use_masks: bool = False):
     """Generic inference loop for flat SB3 models."""
     action_names = ["Attack", "Block", "Dodge", "Approach", "Retreat"]
 
@@ -311,7 +320,13 @@ def _run_inference_loop(env, model, deterministic: bool):
             print(f"\n--- Episode {episode} ---")
 
             while not done:
-                action, _ = model.predict(obs, deterministic=deterministic)
+                if use_masks:
+                    action, _ = model.predict(
+                        obs, action_masks=env.action_masks(),
+                        deterministic=deterministic,
+                    )
+                else:
+                    action, _ = model.predict(obs, deterministic=deterministic)
                 action = int(action)
 
                 obs, reward, terminated, truncated, info = env.step(action)
@@ -340,7 +355,7 @@ def _run_inference_loop(env, model, deterministic: bool):
 
 
 def _run_inference_loop_with_planner(env, model, planner, planning_weight: float,
-                                     deterministic: bool):
+                                     deterministic: bool, use_masks: bool = False):
     """Inference loop that blends policy with world model planner."""
     action_names = ["Attack", "Block", "Dodge", "Approach", "Retreat"]
 
@@ -366,10 +381,20 @@ def _run_inference_loop_with_planner(env, model, planner, planning_weight: float
                 )
 
                 if use_planner:
+                    # Mask at the planning ROOT only (G7): simulated future
+                    # states assume all-legal.
                     base_obs = obs[:env.BASE_OBS_SIZE]
-                    action = planner.plan(base_obs)
+                    action = planner.plan(base_obs, action_mask=env.action_masks())
                     plan_count += 1
                     source = "PLAN"
+                elif use_masks:
+                    action, _ = model.predict(
+                        obs, action_masks=env.action_masks(),
+                        deterministic=deterministic,
+                    )
+                    action = int(action)
+                    policy_count += 1
+                    source = "PPO"
                 else:
                     action, _ = model.predict(obs, deterministic=deterministic)
                     action = int(action)
@@ -426,6 +451,11 @@ def _run_inference_loop_maml(env, policy, deterministic: bool):
                 obs_tensor = torch.FloatTensor(obs).unsqueeze(0)
                 with torch.no_grad():
                     action_logits, _ = policy(obs_tensor)
+
+                # Inline legality mask (independent of MamlPolicy gaining
+                # its own action_mask kwarg).
+                m = torch.as_tensor(env.action_masks())
+                action_logits = action_logits.masked_fill(~m, -1e9)
 
                 if deterministic:
                     action = int(torch.argmax(action_logits, dim=-1).item())
