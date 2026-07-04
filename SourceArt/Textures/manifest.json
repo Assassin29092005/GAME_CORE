@@ -1,0 +1,20 @@
+{
+  "floor": {
+    "slug": "rocky_trail_02",
+    "diff": "D:\\GAME_CORE 5.8\\SourceArt\\Textures\\rocky_trail_02\\rocky_trail_02_diff_2k.jpg",
+    "nor_dx": "D:\\GAME_CORE 5.8\\SourceArt\\Textures\\rocky_trail_02\\rocky_trail_02_nor_dx_2k.jpg",
+    "arm": "D:\\GAME_CORE 5.8\\SourceArt\\Textures\\rocky_trail_02\\rocky_trail_02_arm_2k.jpg"
+  },
+  "rock": {
+    "slug": "rock_face_03",
+    "diff": "D:\\GAME_CORE 5.8\\SourceArt\\Textures\\rock_face_03\\rock_face_03_diff_2k.jpg",
+    "nor_dx": "D:\\GAME_CORE 5.8\\SourceArt\\Textures\\rock_face_03\\rock_face_03_nor_dx_2k.jpg",
+    "arm": "D:\\GAME_CORE 5.8\\SourceArt\\Textures\\rock_face_03\\rock_face_03_arm_2k.jpg"
+  },
+  "dirt": {
+    "slug": "brown_mud_03",
+    "diff": "D:\\GAME_CORE 5.8\\SourceArt\\Textures\\brown_mud_03\\brown_mud_03_diff_2k.jpg",
+    "nor_dx": "D:\\GAME_CORE 5.8\\SourceArt\\Textures\\brown_mud_03\\brown_mud_03_nor_dx_2k.jpg",
+    "arm": "D:\\GAME_CORE 5.8\\SourceArt\\Textures\\brown_mud_03\\brown_mud_03_arm_2k.jpg"
+  }
+}
