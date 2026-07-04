@@ -42,7 +42,9 @@ Install dependencies:
 
 ```bash
 cd Python
-pip install gymnasium stable-baselines3 pyyaml tensorboard torch numpy
+pip install -r requirements.txt
+# includes sb3-contrib (config.yaml defaults training.algorithm to MaskablePPO)
+# and onnx (needed by export_onnx.py); onnxruntime is optional
 ```
 
 Run training or inference (requires UE editor open with the level loaded):
