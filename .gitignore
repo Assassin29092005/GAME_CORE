@@ -42,3 +42,11 @@ Desktop.ini
 
 # Compiled
 *.pdb
+
+# Generated solution files (UBT re-emits these; GAME_CORE.sln stays tracked for now)
+*.slnx
+Automation_GAME_CORE.sln
+
+# Blender auto-backups
+*.blend1
+*.blend2
