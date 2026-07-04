@@ -134,6 +134,20 @@ and a "Feels right when" gate. Overnight training (M1) keeps improving the
 policy in parallel the whole time. **Done when:** the 60-seconds-muted test at
 the end of guide.md passes.
 
+**Status (2026-07-04): the code half of M2 is implemented, compiled, and reviewed**
+(research-grounded via GoW/GDC sources; 13 review findings fixed, rebuilt clean).
+Done in C++: Phase 0.1 config (60fps cap/VSync/smoothing), 0.2 bridge audit items,
+0.3 tick prerequisite, 1.1 buffered-action queue, 3.2 cancel windows, 3.4 per-attack
+weight (hit stop/shake/knockback fields + code shakes), 3.5 i-frames + parry,
+4.1–4.6 full boss execution layer + fallback brain, 5.1–5.3 camera (self-installing
+CombatCameraComponent + lock-on framing enhancements + off-screen rule), 7.2 code-only
+boss HP/poise bar + red/yellow telegraph HUD (GoW color language), 8.1 GameFeelSettings,
+8.2 debug HUD (`combat.DebugHUD 1`). `Tools/place_feel_notifies.py` places the montage
+windows. See CLAUDE.md "Game-Feel Layer". Remaining for M2: Phase 2 locomotion
+(motion-matching spike or blendspace pass), 7.1 audio pass, notify-placement
+verification in PIE, then Phase 8 tuning loops against the "Feels right when" gates
+and the final 60-seconds-muted test.
+
 ## M3 — NPC encounters *(≈1 week · can interleave with M2/M4)*
 
 **Goal:** the shipped game's opening — fight Behavior-Tree patrols whose only
@@ -160,6 +174,32 @@ secret job is feeding the boss's dossier.
 **Done when:** a new player fights 2–3 patrols, and the boss's first-fight
 observation JSON already contains a non-default profile.
 
+**Status (2026-07-04): C++ layer complete and compiled; BP/asset assembly remains.**
+Built + adversarially reviewed this session (10 findings fixed, rebuilt clean):
+`ANPCMinionCharacter` / `AMinionAIController` / `UBTService_MinionCombatState` /
+`UBTTask_MinionAttack` / `UBTDecorator_MinionCanAct` / `AMinionEncounterSpawner`
+(see CLAUDE.md "NPC Minions" for the faction rules and BB key contract). Profiling
+verified vs NPCs: only `KitingScore` had a boss dependency — glue applied in
+`PlayerProfileComponent.cpp`. Map: patrol zone terrain (`SM_PatrolZone.fbx`,
+250×170 m, 3 encounter pads) connects through the arena's entrance canyon;
+`Tools/build_arena_level.py` now imports/places it, spawns patrol points + real
+`MinionEncounterSpawner`s on the pads, and removes the entrance gate blocker.
+`Tools/batch_retarget_anims.py` added for Fab anim-pack → mannequin (and later
+mannequin → MetaHuman) batch retargeting.
+
+**Update (2026-07-04, second pass): playable with zero clicks.** Added a fallback
+code-brain to `MinionAIController` (patrol/chase/attack via the same components when
+no BT asset is assigned — authoring BB/BT assets per the CLAUDE.md recipe upgrades it,
+and is still the intended production path) and `UArenaEditorTools::SpawnNavBoundsVolume`
+(python-callable, real brush — kills the manual volume drag). The whole level build now
+runs headlessly: `UnrealEditor-Cmd ... -ExecutePythonScript="Tools/build_arena_level.py"`
+(the `-run=pythonscript` commandlet crashes on level ops — use `-ExecutePythonScript`).
+The script also bootstraps `/Game/Arena/Minions/` (BP_Minion on the mannequin +
+duplicated montages + DA_MinionCombo) and wires the three spawners + patrol routes.
+BossArena.umap is built and saved. Remaining for done-criteria: PIE session — fight
+2–3 patrols, confirm the boss's first observation carries a non-default profile;
+then swap BP_Minion visuals to the Stone Golem Fab pack when added.
+
 ## M4 — Visuals & terrain *(1–2 weeks · visuals.md is the manual)*
 
 Order inside visuals.md: renderer settings (15 minutes, do early) → **Blender
@@ -167,6 +207,28 @@ arena via Pipeline B** (sculpt → FBX → Nanite, the full click-level pipeline
 written) → five-actor lighting rig → set dressing/bounds/foliage → scalability
 baked into config. **Done when:** the arena holds 60 fps in a real fight at the
 budgets in the VRAM table, and the grayscale-screenshot readability test passes.
+
+**Status (2026-07-04): asset production + automation complete; one editor run remains.**
+Built via Blender MCP + agents this session:
+- `SourceArt/Arena/` — 8 FBXs (Pipeline B, meters, transforms applied): `SM_ArenaTerrain`
+  (200×200 m crater, fight floor flat ±7 cm r<18 m, 15 m rim crest >45° walls, 14 m
+  entrance canyon at +X for the M3 gate), `SM_Rock_01–06` kit, `SM_Monolith` landmark.
+  Source of truth: `arena_source.blend` alongside.
+- `SourceArt/Textures/` — CC0 Poly Haven 2K sets (floor `rocky_trail_02`, rock
+  `rock_face_03`, dirt `brown_mud_03`), nor_dx variants for UE, `manifest.json` +
+  `SOURCES.md`.
+- `Tools/build_arena_level.py` — editor Python; run once via Cmd console `py`: imports all
+  FBXs (Nanite) + textures, builds triplanar slope-blend `M_Terrain` (with guaranteed
+  fallback), creates `/Game/Maps/BossArena`, spawns terrain/rocks/monolith, the full
+  five-actor lighting rig (clamped exposure 0.75–1.25 EV, bloom 0.35, grade), 16-wall
+  blocking ring + `ARENA_BV_EntranceGate` (remove at M3), PlayerStart. Re-runnable
+  (cleans only `ARENA_*` actors). Adversarially reviewed; 3 blockers fixed.
+- Config baked: `DefaultEngine.ini` (Lumen GI/reflections, VSM, TSR, **r.RayTracing
+  flipped True→False** — was violating the 6 GB budget — pool 2200,
+  distance fields on) and new `DefaultGameUserSettings.ini` scalability block.
+Remaining for M4 done-criteria: run the builder script in the editor, place BP_NeuralHero
++ BP_Boss in BossArena, exposure-band fine-tune, 60 fps fight verification (`stat unit`),
+grayscale readability test, then optional decals/foliage/Niagara passes per visuals.md.
 
 ## M5 — Boss in-engine: ONNX + NNE *(3–5 days)*
 

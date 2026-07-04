@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build & Run
 
-Unreal Engine 5.8 C++ project. Module: `GAME_CORE`. Solution: `GAME_CORE.sln`.
+Unreal Engine 5.8 C++ project. Module: `GAME_CORE`. Solution: `GAME_CORE.sln` (UBT also emits `GAME_CORE.slnx` and an `Automation_GAME_CORE.sln`/`.slnx` pair; the plain `GAME_CORE.sln` is the one to open, but per the caveat below don't build from any of them — use `Build.bat`).
 
 **Build (preferred — UE Build.bat directly):**
 ```
@@ -28,8 +28,11 @@ This is the reliable path. Visual Studio / Rider solution build is broken on thi
 A virtualenv with all dependencies already exists at `Python/venv` — use `Python\venv\Scripts\python.exe` (or activate it) instead of installing into the global interpreter.
 ```
 cd Python
-pip install gymnasium stable-baselines3 pyyaml tensorboard torch numpy   # only for a fresh venv
-python train.py                        # flat PPO training
+pip install -r requirements.txt        # only for a fresh venv — includes sb3-contrib
+                                       # (required: config.yaml defaults training.algorithm
+                                       # to MaskablePPO) and onnx (required by export_onnx.py);
+                                       # onnxruntime optional for the ORT agreement check
+python train.py                        # training (MaskablePPO by default; training.algorithm: PPO for flat)
 python train_hierarchical.py           # 3-phase hierarchical training
 python train_transfer.py train_base    # transfer learning base model
 python train_world_model.py train      # world model on replay data
@@ -43,9 +46,11 @@ tensorboard --logdir tb_logs
 
 All Python config is in `Python/config.yaml`. Each extension has an `enabled: true/false` toggle.
 
+**Unreal MCP bridge (`.mcp.json`):** the repo registers an `unreal-mcp` HTTP MCP server at `http://127.0.0.1:8000/mcp`. Its tools are only reachable when the UE editor is running with the matching MCP plugin/endpoint listening — it lets tooling drive the editor directly. If those tools are absent or connection-refused, the editor (or the endpoint) isn't up; this is separate from the RL bridge on TCP 5555.
+
 ## Testing
 
-No automated test suite. Testing is manual: run the UE editor with the level open, then launch the appropriate Python script (`infer.py` or `train.py`). Verify behavior in-game and via TensorBoard metrics.
+The RL stack has an automated harness (no editor needed): `cd Python; venv\Scripts\python.exe smoke_test.py` runs the full training loop against a mock UE bridge (`Python/tests/mock_ue_server.py`) in ~3 s, and `Python/tests/` holds the pytest suite (boss_env, rl_algo, wrappers, replay schema). In-game feel/combat testing remains manual: UE editor with the level open + `infer.py`/`train.py`, verified in-game and via TensorBoard.
 
 **Training-bridge gotcha (the "empty TensorBoard" trap):** TWO independent causes kept `tb_logs/PPO_*` at 88 bytes (header only) on every run. (1) **Flush interval** — SB3 PPO only writes scalars to the event file every `log_interval` *rollouts*; the original `config.yaml` `log_interval: 10` × `n_steps=2048` meant the first flush needed ~20k steps (~22+ min). Lowered to `1` so it flushes every rollout (~2.3 min). (2) **Survival** — the trainer must stay alive that long, but the 10s socket timeout (below) crash-looped it. Both had to be fixed; either one alone still yields an empty dashboard. The original `BossEnv` socket `timeout` was 10s — far too tight: UE shader compilation (first run) and game-thread hitches routinely stall an observation past 10s, so `env.step()`/`reset()` raised `socket.timeout`, the trainer crashed, and `run_training.ps1` relaunched it into a still-busy UE (`ConnectionRefused`) — a crash-loop that never logged anything (symptom: every `tb_logs/PPO_*` dir is exactly 88 bytes = header only). Fixed: `env.timeout` now defaults to 60s (config-driven via `config.yaml` `env.timeout`, passed through `train.py`), and `run_training.ps1 -StartupGraceSeconds` defaults to 90. **Pre-warm shaders once** (run the `-game` instance and let it settle) so the DDC is populated before an unattended run. Diagnose bridge health from the UE log (`Saved/Logs/GAME_CORE.log`, timestamps are **UTC**) — look for `RLBridge: Client connection established` followed by sustained combat, not reconnects every ~10s.
 
@@ -69,10 +74,17 @@ BP_Boss: CombatComponent, StateObservationComponent, RLBridgeComponent,
          EmotionEstimationComponent
 
 BP_NeuralHero: CombatComponent, CombatStateComponent, PlayerProfileComponent,
-               HitReactionComponent, HitFeedbackComponent, AutoHeroComponent
+               HitReactionComponent, HitFeedbackComponent, AutoHeroComponent,
+               LockOnComponent
 ```
 
 `AutoHeroComponent` is the M1 sparring bot — disabled by default; activated by the `-AutoHero=<persona>` launch arg from `Tools/run_training.ps1` (personas: `rusher`, `turtle`, `kiter`, `counter`, `chaotic`). It drives only the public `CombatComponent` API plus Enhanced Input injection (see the Mover gotcha below); training-only behavior, never reached in shipped play.
+
+```
+ANPCMinionCharacter (C++, M3 patrol minions): CombatComponent, HitReactionComponent,
+         HitFeedbackComponent — ACharacter-based ON PURPOSE (not Mover) so stock
+         AIController/BT MoveTo pathing works; CombatComponent supports ACharacter owners.
+```
 
 Components find each other at runtime via `FindComponentByClass` (no hard references). `StateObservationComponent` looks up `CombatComponent` on both actors, `PlayerProfileComponent` on the hero, `PlayerMemoryComponent` and `EmotionEstimationComponent` on the boss.
 
@@ -108,12 +120,34 @@ BP_NeuralHero and BP_Boss are **APawn-based Mover pawns, not `ACharacter`**. Sev
 
 `CombatComponent` also owns the player-side defensive moves. All hold/play state lives here; the bot uses these same entry points so behavior matches a human player exactly. Roll was considered as a slower second-tier evade but cut — dodge alone covers the design without doubling the surface area.
 
-- **Dodge** (`RequestDodge`): single backstep. One slot (`DodgeMontage`), always plays backward along -ActorForward regardless of WASD — the souls-like default. Near-instant (`DodgeBlendInTime` default 0.05s). Displacement is **code-driven, not animation-driven**: the montage plays for visuals with root motion OFF, and `TickComponent` pushes the actor via `AddActorWorldOffset(sweep=true)` for `DodgeDistance` cm over `DodgeDuration` s (defaults 350cm / 0.35s). This sidesteps Mover's root-motion plumbing and motion-warping setup — the actor moves a guaranteed distance even if the source anim has zero authored translation. Hook IA_Dodge → Started → RequestDodge. i-frames arrive with guide.md Phase 3.5's `ANS_Invulnerable` notify state.
+- **Dodge** (`RequestDodge`): single backstep. One slot (`DodgeMontage`), always plays backward along -ActorForward regardless of WASD — the souls-like default. Near-instant (`DodgeBlendInTime` default 0.05s). Displacement is **code-driven, not animation-driven**: the montage plays for visuals with root motion OFF, and `TickComponent` pushes the actor via `AddActorWorldOffset(sweep=true)` for `DodgeDistance` cm over `DodgeDuration` s (defaults 350cm / 0.35s). This sidesteps Mover's root-motion plumbing and motion-warping setup — the actor moves a guaranteed distance even if the source anim has zero authored translation. Hook IA_Dodge → Started → RequestDodge. i-frames are implemented via `ANS_Invulnerable` (separate `bDodgeInvulnerable` flag — never reuses `bIsInvulnerable`), placed at 10–60% of the dodge by `Tools/place_feel_notifies.py` (see Game-Feel Layer).
 - **Block** (`SetBlocking(bool)`): hold-state. `SetBlocking(true)` plays `BlockStartMontage`, then `OnBlockMontageEnded` chains into `BlockIdleMontage` repeatedly (delegate-driven loop, NOT a montage section loop, NOT notify-driven — the M0 hit-stop lesson generalizes). `SetBlocking(false)` plays `BlockEndMontage`. On a frontal hit while blocking, `ApplyDamage` branches on the attack's `FAttackAnimData::DamageType` (passed through from `ANS_DealDamage`): **Light** → reduce damage by `BlockDamageMultiplier` (default 0.25) and play `BlockHitMontage`; **Heavy** → play `BlockBreakMontage`, drop `bIsBlocking`, and let **full damage** through. The flinch is **always suppressed** on blocked hits (`ANS_DealDamage` samples `IsBlockingAgainst(attacker)` BEFORE `ApplyDamage` runs, so the break-montage isn't double-stacked with a flinch).
 - **AnimGraph requirement for block-while-walking**: block montages must play in an upper-body-only slot (project convention: `UpperBody.Block`) layered over the locomotion state machine via `Layered blend per bone` at the spine. If block montages stay in `DefaultGroup.DefaultSlot`, they override the legs and the hero slides when walking with block held. The fix is BP-side: create the slot in the Skeleton's Anim Slot Manager, reassign every block montage to it, then insert a Layered Blend Per Bone node before Output Pose with Branch Filter `spine_01` / Blend Depth 4.
-- **State gates**: `RequestAttack` and `RequestDodge` both refuse while `bIsDodging` is true. `SetBlocking(true)` refuses while attacking/dodging/dead. Cancel windows arrive with guide.md Phase 3.2 — for now everything commits fully.
+- **State gates**: `RequestAttack` and `RequestDodge` both refuse while `bIsDodging` is true. `SetBlocking(true)` refuses while attacking/dodging/dead. Cancel windows are implemented via `ANS_CancelWindow` (guide.md Phase 3.2): attacks cancel into buffered dodge/block inside the window; outside it everything commits fully (see Game-Feel Layer).
 - **Damage instigator**: `ApplyDamage(DamageAmount, AActor* Instigator = nullptr)`. The instigator enables both the block check above and caches `LastHitDirection` (world-space, 2D, BlueprintReadOnly) for knockback/ragdoll impulses when guide.md Phase 6.2/6.3 lands. Always pass the attacker; `ANS_DealDamage::NotifyTick` already does.
 - **Boss block damage reduction**: `BossActionComponent::DoBlock` calls `SetBlocking(true)` on the boss's `CombatComponent` so block isn't visual-only; `OnActionMontageEnded` releases it when `BlockMontage` finishes. The boss's RL "Block" action is a momentary defensive window, not a permanent stance.
+
+### Game-Feel Layer (guide.md implementation — M2)
+
+- **`UGameFeelSettings`** (UDeveloperSettings → Project Settings → Game → Game Feel; persisted in `Config/DefaultGame.ini`) owns all cross-cutting feel numbers: camera (FOV/arm/lag/lock-on), telegraph colors (red unblockable `#FF2A1A` / yellow parryable `#FFC400`), boss-bar chip timing, plus `bEnableBossStatusHUD` / `bEnableCombatCamera` / `bApplyCameraDefaults` toggles. Tune here, never rebuild.
+- **`UGameFeelSubsystem`** (world subsystem) **auto-injects** `UCombatCameraComponent` onto the player pawn and `UBossStatusHUDComponent` onto the boss (actor with `BossActionComponent` — never minions) at world start. No BP component adding needed; kill via the settings toggles.
+- **Boss execution layer** (`BossActionComponent`): `ExecuteActionEnum` gate order is fixed — dead → commitment → recovery lockout → reacting → hysteresis → mask → dispatch. Includes: per-action min durations, `MovementFlipVotes`/`DirectionCommitmentSeconds` hysteresis, C++ action mask (Attack→Approach substitute; `GetLegalActionMask()` also ships a `"mask"` array in the obs JSON, consumed Python-side by MaskablePPO — sb3-contrib 2.9.0, default via config.yaml `training.algorithm`; `rl_algo.py` sniffs legacy plain-PPO checkpoints and loads them unmasked), windup slow-in 0.6× (0.45× when `WasRecentlyRendered` false) restored by `AN_RestoreRate`, `AttackRecoveryDuration` lockout, and the **fallback scripted brain** (watchdog: 1.5 s when disconnected, 45 s when connected-but-silent — SB3's `learn()` gradient pauses must NOT trigger it). `OnBossTelegraph(bIsHeavyUnblockable, WindupSeconds)` broadcasts at every attack start — the HUD's unblockable indicator listens.
+- **Player feel** (`CombatComponent`): single-slot buffered-action queue (`ECombatActionType`, latest-press-wins, `BufferedActionExpiry` 0.3 s) replaces `bInputBuffered`; `ANS_CancelWindow` / `ANS_Invulnerable` (separate `bDodgeInvulnerable` — never reuse `bIsInvulnerable`) / `ANS_HyperArmor` all keep state on the owner component (ANS_DealDamage pattern). **Parry**: block press within `ParryWindow` (0.15 s) of a frontal hit = zero damage + attacker forced Heavy stagger (`DamageType "Parry"` maps to Heavy in `DetermineStaggerIntensity` and pierces hyper-armor, without polluting `CurrentStagger`). `BossActionComponent::BeginPlay` forces `bParryEnabled=false` on the boss — RL Block stays chip-block only. `FAttackAnimData` gained per-attack `HitStopDuration`/`CameraShakeScale`/`KnockbackImpulse`; `UCS_HitLight`/`UCS_HitHeavy` are code-built shake fallbacks when `HitCameraShake` is unset.
+- **Boss status HUD** is pure Slate (`SBossStatusWidget`, no UMG assets): top-center HP bar with GoW-style damage chip, poise bar, hit-confirm flash, and the red/yellow telegraph indicator projected at the boss.
+- **Debug**: `combat.DebugHUD 1` — boss commitment/lockout lines (keys 101-102) + player buffer/cancel/i-frame lines (111-113).
+- **`Tools/place_feel_notifies.py`** — batch-places ANS_CancelWindow / ANS_Invulnerable / ANS_HyperArmor / AN_RestoreRate windows on the montages (idempotent; run headless via `-ExecutePythonScript` or editor `py`).
+
+### NPC Minions (M3 layer)
+
+BT-driven patrols whose only secret job is feeding the boss's dossier (`PlayerProfileComponent` on the hero updates vs any opponent; `PlayerMemoryComponent` carries it into the arena). C++: `ANPCMinionCharacter` (ACharacter; tags itself `Enemy` so lock-on works; forces `bAutoResetRoundOnDeath=false`; death = StopLogic + no-collision + `SetLifeSpan(CorpseLifetime)`), `AMinionAIController` (runs `BehaviorTreeAsset`; BB keys as `static const FName`s: `TargetActor`, `DistanceToTarget`, `bCanAct`, `bTargetDead`, `HomeLocation`, `PatrolLocation`), `UBTService_MinionCombatState` (0.2s; also cycles `PatrolPoints`→`PatrolLocation` so stock MoveTo patrols), `UBTTask_MinionAttack` (routes through `CombatComponent::RequestAttack` ONLY — hit-guard safety), `UBTDecorator_MinionCanAct` (live component check, not stale BB), `AMinionEncounterSpawner` (ring-spawn, nav-projected). Build.cs gained AIModule/NavigationSystem/GameplayTasks.
+
+**Faction rules (cross-cutting changes to be aware of):** the `Enemy` actor tag IS the faction. `ANS_DealDamage` now sweeps `SweepMultiByChannel`, ignores same-faction pawns, and only lands hits on hostile targets with a `CombatComponent` — minion↔minion and minion↔boss friendly fire is impossible by construction. Minion corpses remove their `Enemy` tag and (deferred one tick) destroy their combat components, so tag/component scans never find dead combatants; `LockOnComponent` also drops dead targets pre-hysteresis. `TriggerRoundReset` skips any actor with `GetLifeSpan() > 0` (corpse pending despawn) — don't "fix" that skip, it prevents round resets reviving ghost minions.
+
+**Minion BP setup requirement:** each minion BP needs its OWN duplicated montages + its own `CombatAnimConfig` (montage mutation caveat above — never share montage assets with hero/boss/other minion types).
+
+### Player Lock-On (`LockOnComponent`)
+
+Soft auto-lock on BP_NeuralHero. On tick it finds the nearest actor tagged `EnemyTag` (default `"Enemy"`) within `LockOnRange` (800cm), then `RInterpTo`-rotates the owning pawn's **controller yaw** (`YawInterpRate` 8.0, pitch untouched) to face it; it drops the target past the wider `DisengageRange` (1100cm) hysteresis band so the lock doesn't flicker at the boundary. Because WASD is already controller-yaw-relative (see the Mover input notes), turning the camera to the enemy makes strafe-keys orbit it for free — no separate strafe code. **Setup is BP-side**: add the `Enemy` tag to BP_Boss (and any future NPC enemy) under Class Defaults → Actor → Tags, or nothing locks on. Mover-safe: reads only the PlayerController and writes `ControlRotation`, no `ACharacter` assumption. Query state via `IsLockedOn()` / `GetLockedTarget()`.
 
 Motion warping positions the attacker via `UMotionWarpingComponent`; `UpdateMotionWarpTarget` sets the warp target's location/rotation toward `WarpTargetActor` at each attack start. Hit feedback uses **per-actor `CustomTimeDilation`** for hit stop (not global time dilation) so the RL bridge timer is unaffected; attacker anim is paused via `Montage_Pause`/`Montage_Resume`.
 
@@ -155,7 +189,8 @@ Extensions are loosely coupled. Each can be toggled independently in `config.yam
 
 | Extension | Files |
 |---|---|
-| Core | `boss_env.py`, `train.py`, `infer.py`, `config.yaml` |
+| Core | `boss_env.py`, `train.py`, `infer.py`, `config.yaml`, `rl_algo.py` (algorithm resolve / checkpoint sniffing / ActionMasker), `requirements.txt` |
+| Tests | `smoke_test.py` (end-to-end vs mock bridge), `tests/` (mock_ue_server.py + pytest suite) |
 | Hierarchical RL | `hierarchical_env.py`, `hierarchical_policy.py`, `train_hierarchical.py` |
 | Constrained Learning | `constrained_wrapper.py` |
 | Transfer Learning | `transfer_learning.py`, `train_transfer.py`, `replay_buffer_manager.py`, `replay_recorder.py` |
@@ -201,7 +236,7 @@ Enabled plugins (in `.uproject`): Mover (+ MoverExamples, MoverIntegrations), Mo
 ## Python Conventions
 
 - All config in `Python/config.yaml` with per-extension sections
-- Core RL uses Stable Baselines3 (PPO). MAML uses raw PyTorch
+- Core RL uses Stable Baselines3 2.9 — MaskablePPO (sb3-contrib) by default, flat PPO selectable via `training.algorithm`; `rl_algo.py` resolves the class and auto-detects legacy checkpoints. MAML uses raw PyTorch
 - `BossEnv` observation space is dynamic (17-29 dims). Action space: `Discrete(5)`
 - Reward is phase-based: aggressive when boss HP > 50%, reactive when <= 50%
 - World model and MAML use PyTorch directly (not SB3)
@@ -215,6 +250,9 @@ Enabled plugins (in `.uproject`): Mover (+ MoverExamples, MoverIntegrations), Mo
 - `Website/` — the player dashboard ("Subject Dossier": Firebase auth, profile radar, emotion timeline, fight log, download page). React + Vite; builds clean; demo mode works without Firebase. Setup + the **canonical Firestore schema** (the contract the game's uploader must write) live in `Website/README.md`.
 - `Tools/run_training.ps1` — unattended overnight training supervisor (UE standalone + train.py, crash-restart). Passes the persona to both sides: `-AutoHero=<persona>` to UE, `--player-id <persona>` to `train.py`, so replays land in `replays/<persona>/`.
 - `Tools/set_combo_damage.py` — editor Python script that batch-sets `DamageAmount`/`DamageType` on every entry of every `CombatAnimConfig` asset (10/15/20/25 with Heavy on the chain finisher). Run via Tools → Execute Python Script… or `py "D:\GAME_CORE 5.8\Tools\set_combo_damage.py"` from the **Cmd** console (not Python — that's a common misfire).
+- `Tools/build_arena_level.py` — re-runnable headless level builder (imports SourceArt FBXs with Nanite, builds M_Terrain, assembles /Game/Maps/BossArena incl. lighting/blocking/nav/minion bootstrap). Run via `-ExecutePythonScript` — the `-run=pythonscript` commandlet crashes on level ops.
+- `Tools/batch_retarget_anims.py` — IK-Retargeter batch retarget for Fab anim packs → mannequin (and later mannequin → MetaHuman); edit the constants block at the top, run from the editor Cmd console.
+- `Tools/place_feel_notifies.py` — batch-places the guide.md notify windows (cancel/i-frames/hyper-armor/rate-restore) on montages; idempotent; force-saves and verifies on-disk mtimes.
 - `Python/replay_recorder.py` — gymnasium wrapper that calls `ReplayBufferManager.start_episode/record_step/end_episode` during live training. The write API existed before but nothing called it; `train.py` now wraps `BossEnv` with this when `transfer.record_replays` is on (default: true), so overnight runs actually produce the `replays/<player_id>/episode_NNNN.npz` files that MAML / IRL / world-model / transfer training read.
 - `Python/train.py --player-id <name>` — CLI override for `env.player_id` so the harness can key replays per persona without editing config.yaml.
 - `Python/export_onnx.py` — SB3 checkpoint → ONNX for in-engine NNE inference, with agreement verification.
