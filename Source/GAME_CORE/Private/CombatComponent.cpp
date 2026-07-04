@@ -6,8 +6,58 @@
 #include "EngineUtils.h"
 #include "BossActionComponent.h"
 #include "HitReactionComponent.h"
+#include "HitFeedbackComponent.h"
+#include "PlayerProfileComponent.h"
 #include "MoverComponent.h"
 #include "DefaultMovementSet/InstantMovementEffects/BasicInstantMovementEffects.h"
+#include "Engine/Engine.h"
+#include "HAL/IConsoleManager.h"
+#include "HAL/PlatformTime.h"
+#include "Kismet/GameplayStatics.h"
+
+#if !UE_BUILD_SHIPPING
+// guide.md 8.2 feel-debug overlay toggle. BossActionComponent.cpp registers the
+// same "combat.DebugHUD" name for the boss-side lines, so find-or-register here
+// instead of a second TAutoConsoleVariable — two static registrations of one
+// name collide at module load.
+static IConsoleVariable* GetCombatDebugHUDCVar()
+{
+	static IConsoleVariable* CachedCVar = nullptr;
+	if (!CachedCVar)
+	{
+		IConsoleManager& ConsoleManager = IConsoleManager::Get();
+		CachedCVar = ConsoleManager.FindConsoleVariable(TEXT("combat.DebugHUD"));
+		if (!CachedCVar)
+		{
+			CachedCVar = ConsoleManager.RegisterConsoleVariable(
+				TEXT("combat.DebugHUD"), 0, TEXT("1 = combat feel debug overlay"), ECVF_Default);
+		}
+	}
+	return CachedCVar;
+}
+
+static const TCHAR* CombatActionToString(ECombatActionType Type)
+{
+	switch (Type)
+	{
+	case ECombatActionType::Attack: return TEXT("Attack");
+	case ECombatActionType::Dodge:  return TEXT("Dodge");
+	case ECombatActionType::Block:  return TEXT("Block");
+	default:                        return TEXT("None");
+	}
+}
+#endif // !UE_BUILD_SHIPPING
+
+// Profiling glue: CombatComponent is shared hero/boss/minion code, but only the
+// hero carries a UPlayerProfileComponent — FindComponentByClass makes every
+// Record* call below a no-op on the boss and on minions. These call sites exist
+// because profile dims 1/2/6 (dodge/block/combo-completion) had no feeder at
+// all: the Record* API existed but nothing invoked it, so the dims sat frozen
+// at 0.5 against every opponent.
+static UPlayerProfileComponent* GetOwnerProfile(const AActor* Owner)
+{
+	return Owner ? Owner->FindComponentByClass<UPlayerProfileComponent>() : nullptr;
+}
 
 UCombatComponent::UCombatComponent()
 {
@@ -33,6 +83,29 @@ void UCombatComponent::BeginPlay()
 void UCombatComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+
+#if !UE_BUILD_SHIPPING
+	// guide.md 8.2 — player feel-debug lines. Piggybacks on the existing dodge
+	// tick (this component already ticks every frame). Fixed message keys
+	// (111-113) repaint in place; only the player pawn draws them so the boss's
+	// and minions' CombatComponents don't fight over the same keys.
+	if (GEngine && GetCombatDebugHUDCVar()->GetInt() > 0
+		&& GetOwner() == UGameplayStatics::GetPlayerPawn(this, 0))
+	{
+		const bool bHasBuffered = BufferedAction.Type != ECombatActionType::None;
+		const double BufferedAge = bHasBuffered ? (FPlatformTime::Seconds() - BufferedAction.Timestamp) : 0.0;
+		GEngine->AddOnScreenDebugMessage(111, 0.f, FColor::Cyan, FString::Printf(
+			TEXT("Buffered: %s  age: %.2fs / %.2fs"),
+			CombatActionToString(BufferedAction.Type), BufferedAge, BufferedActionExpiry));
+		GEngine->AddOnScreenDebugMessage(112, 0.f, bCancelWindowOpen ? FColor::Green : FColor::Silver, FString::Printf(
+			TEXT("CancelWindow: %s  iFrames: %s"),
+			bCancelWindowOpen ? TEXT("OPEN") : TEXT("closed"),
+			bDodgeInvulnerable ? TEXT("ON") : TEXT("off")));
+		GEngine->AddOnScreenDebugMessage(113, 0.f, FColor::White, FString::Printf(
+			TEXT("ComboStep: %d  Attacking:%d Dodging:%d Blocking:%d Cooldown:%d"),
+			ComboStep, bIsAttacking ? 1 : 0, bIsDodging ? 1 : 0, bIsBlocking ? 1 : 0, bInAttackCooldown ? 1 : 0));
+	}
+#endif
 
 	if (!bIsDodging || DodgeDuration <= 0.0f || DodgeDistance <= 0.0f) return;
 
@@ -63,7 +136,10 @@ void UCombatComponent::ApplyDamage(float DamageAmount, AActor* InstigatorActor, 
 	// Brief grace period right after ResetForNewRound — combo hits that landed during
 	// the death→reset transition (e.g., the second hit of a 2-hit combo) would otherwise
 	// drain the freshly restored HP back to zero and trigger the death montage twice.
-	if (bIsInvulnerable) return;
+	// bDodgeInvulnerable is the ANS_Invulnerable dodge window (guide.md 3.5) —
+	// deliberately a separate bool so dodge i-frames and the reset grace never
+	// fight over one flag.
+	if (bIsInvulnerable || bDodgeInvulnerable) return;
 
 	if (InstigatorActor && GetOwner())
 	{
@@ -73,6 +149,42 @@ void UCombatComponent::ApplyDamage(float DamageAmount, AActor* InstigatorActor, 
 	float FinalDamage = DamageAmount;
 	if (IsBlockingAgainst(InstigatorActor))
 	{
+		// Profile dim 2 (BlockTendency). ApplyDamage is the ONE seam that sees
+		// every blocked hit — the designed hook (OnHitReactionTriggered) never
+		// fires for blocks because ANS_DealDamage suppresses the flinch on them.
+		if (UPlayerProfileComponent* Profile = GetOwnerProfile(GetOwner()))
+		{
+			Profile->RecordBlock();
+		}
+
+		// --- Parry (guide.md 3.5) — checked BEFORE the block math. Block pressed
+		// within ParryWindow of impact: zero damage, and the attacker gets a heavy
+		// stagger + the long freeze. DamageType "Parry" deliberately pierces the
+		// boss's hyper-armor gate in HitReactionComponent (parry stays the
+		// counterplay to armored attacks), and the 61-point stagger clears
+		// HeavyStaggerThreshold (60) in one hit.
+		const UWorld* ParryWorld = GetWorld();
+		const double Now = ParryWorld ? ParryWorld->GetTimeSeconds() : 0.0;
+		if (bParryEnabled && InstigatorActor && ParryWindow > 0.0f && (Now - LastBlockStartTime) <= ParryWindow)
+		{
+			if (UHitReactionComponent* AttackerReaction =
+					InstigatorActor->FindComponentByClass<UHitReactionComponent>())
+			{
+				// >= HeavyStaggerThreshold (60) forces a heavy reaction in one hit
+				AttackerReaction->PlayHitReaction(GetOwner(), 61.0f, FName(TEXT("Parry")));
+			}
+			if (UHitFeedbackComponent* AttackerFeedback =
+					InstigatorActor->FindComponentByClass<UHitFeedbackComponent>())
+			{
+				AttackerFeedback->TriggerHeavyHitFeedback(GetOwner());   // the long freeze
+			}
+
+			UE_LOG(LogTemp, Log, TEXT("CombatComponent[%s]: PARRY — %.1f dmg negated, attacker %s staggered (window %.2fs)"),
+				GetOwner() ? *GetOwner()->GetName() : TEXT("?"),
+				DamageAmount, *InstigatorActor->GetName(), ParryWindow);
+			return;   // zero damage — a parry is not a block
+		}
+
 		const bool bHeavyAttack = (DamageType == FName("Heavy"));
 		if (bHeavyAttack && BlockBreakMontage)
 		{
@@ -97,6 +209,15 @@ void UCombatComponent::ApplyDamage(float DamageAmount, AActor* InstigatorActor, 
 
 			UE_LOG(LogTemp, Log, TEXT("CombatComponent: BLOCKED (%s) — %.1f reduced to %.1f"),
 				*DamageType.ToString(), DamageAmount, FinalDamage);
+		}
+	}
+	else
+	{
+		// Profile dims 1/2 denominator: an unblocked (and, since RequestDodge
+		// records dodges separately, un-evaded) incoming hit.
+		if (UPlayerProfileComponent* Profile = GetOwnerProfile(GetOwner()))
+		{
+			Profile->RecordHitTaken();
 		}
 	}
 
@@ -165,8 +286,19 @@ void UCombatComponent::TriggerRoundReset()
 		AActor* Actor = *It;
 		if (!Actor) continue;
 
+		// Skip corpses already scheduled for despawn (minion HandleDeath arms
+		// SetLifeSpan) — reviving one produces an unpossessed, collision-less
+		// ghost that vanishes mid-round when the lifespan fires.
+		if (Actor->GetLifeSpan() > 0.0f) continue;
+
+		UCombatComponent* Combat = Actor->FindComponentByClass<UCombatComponent>();
+
+		// Skip actors that opted out of the arena sweep (minions: transient
+		// encounter extras must not be healed/teleported by a hero/boss round).
+		if (Combat && !Combat->bParticipatesInArenaReset) continue;
+
 		bool bTouched = false;
-		if (UCombatComponent* Combat = Actor->FindComponentByClass<UCombatComponent>())
+		if (Combat)
 		{
 			Combat->ResetForNewRound();
 			bTouched = true;
@@ -240,6 +372,13 @@ void UCombatComponent::ResetForNewRound()
 	CurrentDodgeMontage = nullptr;
 	CurrentBlockMontage = nullptr;
 
+	// A dodge interrupted by death must not leak i-frames into the next round,
+	// a stale buffered press must never fire "by itself" after the reset, and a
+	// skipped ANS_CancelWindow NotifyEnd must not leave everything cancelable.
+	bDodgeInvulnerable = false;
+	bCancelWindowOpen = false;
+	BufferedAction = FBufferedAction();
+
 	// Teleport the actor back to its spawn pose. Mover pawns hold their own
 	// authoritative position in the sim — a plain SetActorTransform gets snapped
 	// back the next tick — so route through Mover's FTeleportEffect when a
@@ -294,6 +433,75 @@ void UCombatComponent::ResetForNewRound()
 void UCombatComponent::ClearInvulnerability()
 {
 	bIsInvulnerable = false;
+}
+
+// --- Buffered-action queue (guide.md 1.1) ---
+
+void UCombatComponent::BufferAction(ECombatActionType Type)
+{
+	// Overwriting the single slot on every press IS the latest-press-wins rule.
+	BufferedAction.Type = Type;
+	BufferedAction.Timestamp = FPlatformTime::Seconds();
+}
+
+bool UCombatComponent::HasFreshBufferedAction(ECombatActionType Type) const
+{
+	return BufferedAction.Type == Type
+		&& (FPlatformTime::Seconds() - BufferedAction.Timestamp) <= BufferedActionExpiry;
+}
+
+bool UCombatComponent::TryConsumeBufferedAction()
+{
+	if (BufferedAction.Type == ECombatActionType::None) return false;
+
+	// Take the slot before dispatching — the Request* call may legitimately
+	// re-buffer (still illegal at this consume site), and must not recurse.
+	const FBufferedAction Pending = BufferedAction;
+	BufferedAction = FBufferedAction();
+
+	if ((FPlatformTime::Seconds() - Pending.Timestamp) > BufferedActionExpiry)
+	{
+		return false;   // stale press — dropped, never fires "by itself"
+	}
+
+	switch (Pending.Type)
+	{
+	case ECombatActionType::Attack: RequestAttack();     break;
+	case ECombatActionType::Dodge:  RequestDodge();      break;
+	case ECombatActionType::Block:  SetBlocking(true);   break;
+	default: return false;
+	}
+
+	// If the dispatch immediately re-buffered the same action (this consume site
+	// wasn't legal for it after all), keep the ORIGINAL press timestamp so the
+	// expiry is still measured from the actual press.
+	if (BufferedAction.Type == Pending.Type)
+	{
+		BufferedAction.Timestamp = Pending.Timestamp;
+	}
+	return true;
+}
+
+// --- Cancel window (guide.md 3.2) ---
+
+void UCombatComponent::SetCancelWindowOpen(bool bOpen)
+{
+	bCancelWindowOpen = bOpen;
+
+	// A press buffered during startup fires the exact frame the window opens —
+	// the single most feel-critical line in Phase 3. Safe against the hit-stop
+	// NotifyBegin re-fire: draining an empty buffer is a no-op.
+	if (bOpen)
+	{
+		TryConsumeBufferedAction();
+	}
+}
+
+// --- Dodge i-frames (guide.md 3.5) ---
+
+void UCombatComponent::SetDodgeInvulnerable(bool bNewInvulnerable)
+{
+	bDodgeInvulnerable = bNewInvulnerable;
 }
 
 // --- Combo / Montage System ---
@@ -431,13 +639,27 @@ void UCombatComponent::StartCooldown()
 void UCombatComponent::ClearCooldown()
 {
 	bInAttackCooldown = false;
+
+	// First legal frame for an attack buffered during the cooldown (guide.md 1.1).
+	TryConsumeBufferedAction();
 }
 
 void UCombatComponent::RequestAttack()
 {
 	if (bIsDead) return;
-	if (bIsDodging) return;       // commit to the dodge; cancel windows arrive in guide.md 3.2
-	if (bInAttackCooldown) return;
+
+	// A press that does nothing is a bug (guide.md 1.1): illegal-now presses
+	// buffer and fire at the first legal frame instead of vanishing.
+	if (bIsDodging)
+	{
+		BufferAction(ECombatActionType::Attack);   // fires when the dodge ends
+		return;
+	}
+	if (bInAttackCooldown)
+	{
+		BufferAction(ECombatActionType::Attack);   // fires in ClearCooldown
+		return;
+	}
 
 	// Attacking lowers the guard automatically.
 	if (bIsBlocking)
@@ -456,8 +678,8 @@ void UCombatComponent::RequestAttack()
 	// If currently attacking, buffer input for combo continuation
 	if (bIsAttacking)
 	{
-		// Buffer input regardless of combo window — will be consumed when window opens
-		bInputBuffered = true;
+		// Buffered regardless of combo window — consumed when the window opens
+		BufferAction(ECombatActionType::Attack);
 		return;
 	}
 
@@ -474,7 +696,7 @@ void UCombatComponent::PlayComboMontage(const FAttackAnimData& AttackData)
 
 	bIsAttacking = true;
 	bComboWindowOpen = false;
-	bInputBuffered = false;
+	bCancelWindowOpen = false;    // defensive: interruption can skip ANS_CancelWindow's NotifyEnd
 	bHitLandedThisAttack = false; // Fresh swing — allow one hit to land
 
 	UAnimMontage* Montage = AttackData.Montage;
@@ -495,6 +717,16 @@ void UCombatComponent::PlayComboMontage(const FAttackAnimData& AttackData)
 
 	if (Duration > 0.0f)
 	{
+		// Profile dim 6 numerator's counterpart: a chain-start swing that actually
+		// played opens a new combo attempt.
+		if (ComboStep == 0)
+		{
+			if (UPlayerProfileComponent* Profile = GetOwnerProfile(GetOwner()))
+			{
+				Profile->RecordComboStarted();
+			}
+		}
+
 		// Bind delegates AFTER Montage_Play so the montage instance exists
 		FOnMontageEnded EndDelegate;
 		EndDelegate.BindUObject(this, &UCombatComponent::OnMontageEnded);
@@ -547,13 +779,15 @@ void UCombatComponent::OpenComboWindow()
 		);
 	}
 
-	// If input was buffered, advance combo immediately — but only if there's a next step.
-	// Looping back to step 0 turned the combo into an infinite chain when the config had
-	// only one attack (every press kept playing Hit1 forever). Cap at combo length and
-	// let the current swing finish naturally — OnMontageEnded then applies cooldown.
-	if (bInputBuffered)
+	// If an Attack press is buffered (and fresh), advance combo immediately — but only
+	// if there's a next step. Looping back to step 0 turned the combo into an infinite
+	// chain when the config had only one attack (every press kept playing Hit1 forever).
+	// Cap at combo length and let the current swing finish naturally — OnMontageEnded
+	// then applies cooldown. Only the Attack type is consumed here: a buffered Dodge or
+	// Block is NOT legal mid-swing (that's the cancel window's job, guide.md 3.2).
+	if (HasFreshBufferedAction(ECombatActionType::Attack))
 	{
-		bInputBuffered = false;
+		BufferedAction = FBufferedAction();
 
 		const int32 NextStep = ComboStep + 1;
 		if (CombatConfig && NextStep < CombatConfig->GetComboLength())
@@ -589,7 +823,12 @@ void UCombatComponent::CloseComboWindow()
 
 void UCombatComponent::OnMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted)
 {
-	// Fires when blend-out starts
+	// Fires when blend-out starts — an early "first legal frame" for buffered
+	// presses (guide.md 1.1). If the press is still illegal here (bIsAttacking
+	// clears only in OnMontageEnded), the dispatch re-buffers it with its
+	// original timestamp and the montage-end drain picks it up.
+	if (Montage != CurrentComboMontage) return;
+	TryConsumeBufferedAction();
 }
 
 void UCombatComponent::OnMontageEnded(UAnimMontage* Montage, bool bInterrupted)
@@ -600,7 +839,20 @@ void UCombatComponent::OnMontageEnded(UAnimMontage* Montage, bool bInterrupted)
 		return;
 	}
 
+	// Profile dim 6 (ComboCompletionRate): the chain reached its final configured
+	// step and that swing finished without being interrupted. Checked here (not
+	// in OpenComboWindow's exhausted branch) so it fires exactly once per chain,
+	// whether or not the player mashed past the last step.
+	if (!bInterrupted && CombatConfig && ComboStep == CombatConfig->GetComboLength() - 1)
+	{
+		if (UPlayerProfileComponent* Profile = GetOwnerProfile(GetOwner()))
+		{
+			Profile->RecordComboCompleted();
+		}
+	}
+
 	bIsAttacking = false;
+	bCancelWindowOpen = false;   // defensive: interruption can skip ANS_CancelWindow's NotifyEnd
 
 	UWorld* World = GetWorld();
 	if (World)
@@ -613,12 +865,41 @@ void UCombatComponent::OnMontageEnded(UAnimMontage* Montage, bool bInterrupted)
 		ResetCombo();
 		StartCooldown();
 	}
-	else if (!bComboWindowOpen)
+	else
 	{
-		// Montage finished naturally without combo continuation — apply cooldown
+		// Montage finished naturally. If an Attack continuation was buffered while
+		// the window was open (press landed after OpenComboWindow's consume point),
+		// chain into the next step now. Otherwise the chain is OVER even if the
+		// combo window is technically still open: leaving bComboWindowOpen=true
+		// with no ResetCombo/StartCooldown let BT-driven attackers
+		// (BTTask_MinionAttack sees !IsAttacking → Succeeded → re-execute)
+		// machine-gun swings with AttackCooldownDuration never applying, and
+		// replay a stale mid-chain ComboStep out of order.
+		const int32 NextStep = ComboStep + 1;
+		if (bComboWindowOpen && HasFreshBufferedAction(ECombatActionType::Attack)
+			&& CombatConfig && NextStep < CombatConfig->GetComboLength())
+		{
+			BufferedAction = FBufferedAction();
+			bComboWindowOpen = false;
+
+			const FAttackAnimData* NextAttack = CombatConfig->GetAttackData(NextStep);
+			if (NextAttack && NextAttack->Montage)
+			{
+				ComboStep = NextStep;
+				PlayComboMontage(*NextAttack);
+				return;
+			}
+		}
+
 		ResetCombo();
 		StartCooldown();
 	}
+
+	// Montage end is a "first legal frame" (guide.md 1.1): a Dodge/Block press
+	// swallowed mid-swing fires here. A buffered Attack re-buffers through the
+	// just-started cooldown (original timestamp kept) and either fires in
+	// ClearCooldown or expires — no attack sneaks past AttackCooldownDuration.
+	TryConsumeBufferedAction();
 }
 
 void UCombatComponent::ResetCombo()
@@ -626,9 +907,13 @@ void UCombatComponent::ResetCombo()
 	ComboStep = 0;
 	bIsAttacking = false;
 	bComboWindowOpen = false;
-	bInputBuffered = false;
+	bCancelWindowOpen = false;   // no attack -> nothing to cancel out of
 	bHitLandedThisAttack = false;
 	CurrentComboMontage = nullptr;
+	// NOTE: BufferedAction is deliberately NOT cleared here — ResetCombo runs on
+	// every chain end/interrupt, and wiping the slot there would eat a Dodge or
+	// Block pressed during the final swing before its montage-end drain fires.
+	// The buffer is only cleared by consumption, expiry, or ResetForNewRound.
 
 	UWorld* World = GetWorld();
 	if (World)
@@ -641,8 +926,40 @@ void UCombatComponent::ResetCombo()
 
 void UCombatComponent::RequestDodge()
 {
-	if (bIsDead || bIsDodging) return;
-	if (bIsAttacking) return;     // dodge-cancel arrives with guide.md 3.2 cancel windows
+	if (bIsDead) return;
+	if (bIsDodging)
+	{
+		// Mid-dodge press: latest-press-wins buffer, fires when this dodge ends.
+		BufferAction(ECombatActionType::Dodge);
+		return;
+	}
+	if (bIsAttacking)
+	{
+		if (bCancelWindowOpen)
+		{
+			// Recovery is cancelable (guide.md 3.2): cut the attack into the
+			// dodge immediately. Close the window first — the stop fires the
+			// montage delegates and NotifyEnd may or may not run on a stop.
+			bCancelWindowOpen = false;
+			if (UAnimInstance* CancelAnimInstance = GetOwnerAnimInstance())
+			{
+				if (CurrentComboMontage)
+				{
+					CancelAnimInstance->Montage_Stop(0.05f, CurrentComboMontage);
+				}
+			}
+			bIsAttacking = false;   // OnMontageEnded(bInterrupted) also clears; don't wait a blend for the dodge
+			// fall through — the dodge plays this frame
+		}
+		else
+		{
+			// Startup/active frames commit. The press is never eaten: it fires
+			// the exact frame the cancel window opens (SetCancelWindowOpen drain)
+			// or at montage end, whichever comes first.
+			BufferAction(ECombatActionType::Dodge);
+			return;
+		}
+	}
 	// NOTE: deliberately NOT gated on bInAttackCooldown — cooldown gates attacks, never escapes.
 
 	if (!DodgeMontage) return;
@@ -673,6 +990,12 @@ void UCombatComponent::RequestDodge()
 		bIsDodging = true;
 		CurrentDodgeMontage = DodgeMontage;
 
+		// Profile dim 1 (DodgeTendency) — count only dodges that actually played.
+		if (UPlayerProfileComponent* Profile = GetOwnerProfile(Owner))
+		{
+			Profile->RecordDodge();
+		}
+
 		// Always backstep along -ActorForward, regardless of WASD.
 		DodgeDirection = -Owner->GetActorForwardVector();
 		DodgeElapsed = 0.0f;
@@ -691,14 +1014,65 @@ void UCombatComponent::OnDodgeMontageEnded(UAnimMontage* Montage, bool bInterrup
 	if (Montage != CurrentDodgeMontage) return;
 	bIsDodging = false;
 	CurrentDodgeMontage = nullptr;
+
+	// Defensive i-frame clear: an interrupted dodge montage can skip
+	// ANS_Invulnerable's NotifyEnd, and leaked i-frames are an invincible hero.
+	bDodgeInvulnerable = false;
+
+	// Dodge end is a "first legal frame" — an Attack/Block (or chained Dodge)
+	// pressed mid-dodge fires now instead of vanishing.
+	TryConsumeBufferedAction();
 }
 
 // --- Block ---
 
 void UCombatComponent::SetBlocking(bool bNewBlocking)
 {
+	// Releasing the button also discards a not-yet-fired buffered Block press —
+	// otherwise a tap during a swing raises the guard AFTER the key is already
+	// up, and it sticks until the next release event.
+	if (!bNewBlocking && BufferedAction.Type == ECombatActionType::Block)
+	{
+		BufferedAction = FBufferedAction();
+	}
+
 	if (bNewBlocking == bIsBlocking) return;
-	if (bNewBlocking && (bIsDead || bIsDodging || bIsAttacking)) return;
+	if (bNewBlocking)
+	{
+		if (bIsDead) return;
+		if (bIsAttacking && bCancelWindowOpen)
+		{
+			// Recovery is cancelable into block too (guide.md 3.2).
+			bCancelWindowOpen = false;
+			if (UAnimInstance* CancelAnimInstance = GetOwnerAnimInstance())
+			{
+				if (CurrentComboMontage)
+				{
+					CancelAnimInstance->Montage_Stop(0.05f, CurrentComboMontage);
+				}
+			}
+			bIsAttacking = false;   // OnMontageEnded(bInterrupted) also clears
+		}
+		else if (bIsAttacking || bIsDodging)
+		{
+			// Illegal now — buffer; fires at the cancel window / montage end /
+			// dodge end drain (guide.md 1.1).
+			BufferAction(ECombatActionType::Block);
+			return;
+		}
+
+		// Parry stamp (guide.md 3.5): ApplyDamage compares hit time against the
+		// moment the guard came UP, so only a just-raised block parries.
+		// Gated on bParryEnabled so the boss's DoBlock (which shares this entry
+		// point) never arms a parry window the player can't read.
+		if (bParryEnabled)
+		{
+			if (const UWorld* World = GetWorld())
+			{
+				LastBlockStartTime = World->GetTimeSeconds();
+			}
+		}
+	}
 
 	bIsBlocking = bNewBlocking;
 

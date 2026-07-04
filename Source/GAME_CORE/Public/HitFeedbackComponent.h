@@ -32,6 +32,8 @@ public:
 	float AnimPauseDuration = 0.07f;
 
 	// --- Camera Shake ---
+	/** Optional BP-assigned shake. Leave unset to fall back to the code-only
+	 *  defaults (UCS_HitLight for normal hits, UCS_HitHeavy for the heavy tier). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HitFeedback|CameraShake")
 	TSubclassOf<UCameraShakeBase> HitCameraShake;
 
@@ -42,6 +44,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "HitFeedback")
 	void TriggerHitFeedback(AActor* Attacker);
 
+	/** Per-attack overload (guide.md 3.4): ANS_DealDamage passes the landing
+	 *  attack's FAttackAnimData feedback numbers through here so weight lives in
+	 *  data. Plain C++ overload, NOT a UFUNCTION — UHT can't overload; BP keeps
+	 *  the no-argument version whose component defaults stay the fallback. */
+	void TriggerHitFeedback(AActor* Attacker, float StopDuration, float ShakeScale);
+
 	// Heavier variant for combo finishers
 	UFUNCTION(BlueprintCallable, Category = "HitFeedback")
 	void TriggerHeavyHitFeedback(AActor* Attacker);
@@ -51,7 +59,7 @@ private:
 	void RestoreTimeDilation();
 	void PauseAttackerAnim(AActor* Attacker, float Duration);
 	void ResumeAttackerAnim();
-	void PlayCameraShake(float Scale);
+	void PlayCameraShake(float Scale, bool bHeavy = false);
 
 	FTimerHandle HitStopTimerHandle;
 	FTimerHandle AnimPauseTimerHandle;

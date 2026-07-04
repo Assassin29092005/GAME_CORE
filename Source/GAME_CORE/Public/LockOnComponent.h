@@ -6,9 +6,14 @@
 
 /**
  * Auto-engage soft lock-on for the player. When an actor tagged with EnemyTag
- * is within LockOnRange, smoothly rotates the player's controller yaw to face
- * it (pitch is left alone — player keeps vertical look control). Existing
- * controller-yaw-relative WASD becomes strafe-around-enemy naturally.
+ * is within LockOnRange, smoothly rotates the player's controller yaw toward it,
+ * plus a gentle pitch framing (guide.md 5.2 step 3: pitch clamped to frame
+ * slightly above the target's root). Existing controller-yaw-relative WASD
+ * becomes strafe-around-enemy naturally.
+ *
+ * Bias, never override: the correction is scaled by (1 - LookInputMagnitude)
+ * (mouse delta + gamepad right stick, via UCombatCameraComponent), so the moment
+ * the player touches the look input the lock yields completely.
  *
  * Targets are picked by Actor Tag (default "Enemy"). Add the tag to BP_Boss
  * (and any future NPC enemy) under Class Defaults → Actor → Tags.
@@ -37,8 +42,15 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "LockOn", meta = (ClampMin = "0.0"))
 	float DisengageRange = 1100.0f;
 
-	/** Yaw smoothing rate for FMath::RInterpTo. Higher = snappier (8 ≈ ~250ms to settle). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "LockOn", meta = (ClampMin = "0.0"))
+	/** When true, YawInterpRate below is used verbatim. When false (default), the
+	 *  interp speed comes from UGameFeelSettings::LockOnInterpSpeed so it can be
+	 *  tuned centrally with every other feel number (guide.md Phase 8.1). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "LockOn")
+	bool bOverrideInterpSpeed = false;
+
+	/** Smoothing rate for FMath::RInterpTo when bOverrideInterpSpeed is set.
+	 *  Higher = snappier (8 ≈ ~250ms to settle). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "LockOn", meta = (ClampMin = "0.0", EditCondition = "bOverrideInterpSpeed"))
 	float YawInterpRate = 8.0f;
 
 	UFUNCTION(BlueprintPure, Category = "LockOn")

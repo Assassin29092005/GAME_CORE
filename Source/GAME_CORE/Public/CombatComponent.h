@@ -11,6 +11,21 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnAttackLanded, float, DamageAmoun
 class UAnimInstance;
 class UMotionWarpingComponent;
 
+/** One-shot combat intents the buffered-action queue can hold (guide.md 1.1). */
+UENUM(BlueprintType)
+enum class ECombatActionType : uint8 { None, Attack, Dodge, Block };
+
+/** Single-slot buffer: a press that can't legally fire yet, plus when it happened.
+ *  BufferAction overwrites the slot on every press — that IS the latest-press-wins
+ *  rule, no array needed. */
+USTRUCT()
+struct FBufferedAction
+{
+	GENERATED_BODY()
+	ECombatActionType Type = ECombatActionType::None;
+	double Timestamp = -1.0;   // FPlatformTime::Seconds() at press
+};
+
 UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
 class GAME_CORE_API UCombatComponent : public UActorComponent
 {
@@ -92,6 +107,15 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Round", meta = (ClampMin = "0.0"))
 	float RoundResetDelay = 2.5f;
 
+	/** When false, TriggerRoundReset skips this actor entirely. The full-arena
+	 *  sweep is meant for the ROUND combatants (hero + boss); transient extras
+	 *  like minions must not be healed/teleported by it — a minion corpse being
+	 *  "revived" mid-CorpseLifetime produced an unpossessed, unhittable ghost
+	 *  that the pending SetLifeSpan then destroyed mid-round.
+	 *  ANPCMinionCharacter::BeginPlay forces this false. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Round")
+	bool bParticipatesInArenaReset = true;
+
 	/** Reset EVERY combatant in the arena (every actor with a CombatComponent),
 	 *  not just this one. Safe to call from either death path or manually. */
 	UFUNCTION(BlueprintCallable, Category = "Combat|Round")
@@ -133,6 +157,16 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Combat|Dodge")
 	bool IsDodging() const { return bIsDodging; }
 
+	/** Dodge i-frames (guide.md 3.5). Driven by ANS_Invulnerable on the dodge
+	 *  montage — deliberately a SEPARATE bool from bIsInvulnerable, which is
+	 *  owned by ResetForNewRound/InvulnTimerHandle; a second owner of that bool
+	 *  would clear (or be cleared by) the post-reset window. */
+	UFUNCTION(BlueprintCallable, Category = "Combat|Dodge")
+	void SetDodgeInvulnerable(bool bNewInvulnerable);
+
+	UFUNCTION(BlueprintPure, Category = "Combat|Dodge")
+	bool IsDodgeInvulnerable() const { return bDodgeInvulnerable; }
+
 	// --- Block ---
 	// Hold-state: SetBlocking(true) plays BlockStart, then chains BlockIdle
 	// repeatedly until released (deliberate replay via end-delegate — NOT a
@@ -159,6 +193,22 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Block", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float BlockDamageMultiplier = 0.25f;
 
+	/** Parry (guide.md 3.5): a frontal hit landing within this many seconds of the
+	 *  block being RAISED (SetBlocking(true)) is parried — zero damage, and the
+	 *  attacker eats a heavy stagger + the long freeze. Block held early = chip
+	 *  damage; block tapped just before impact = parry. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Block", meta = (ClampMin = "0.0", ClampMax = "0.5"))
+	float ParryWindow = 0.15f;
+
+	/** Parry is a PLAYER-side mechanic (guide.md 3.5). Default true; the boss's
+	 *  BossActionComponent forces this false in BeginPlay so the RL "Block"
+	 *  action never silently opens a parry window — the trained policy's Block
+	 *  was never a hard counter, and the HUD color language promises yellow =
+	 *  the PLAYER can parry, not the boss. If a boss parry is ever wanted, it
+	 *  must ship with a player-readable telegraph and a retrained policy. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Block")
+	bool bParryEnabled = true;
+
 	/** Hook IA_Block Started -> true, Completed -> false. */
 	UFUNCTION(BlueprintCallable, Category = "Combat|Block")
 	void SetBlocking(bool bNewBlocking);
@@ -170,6 +220,25 @@ public:
 	 *  ANS_DealDamage uses this to suppress the flinch on blocked hits. */
 	UFUNCTION(BlueprintPure, Category = "Combat|Block")
 	bool IsBlockingAgainst(const AActor* Attacker) const;
+
+	// --- Buffered input (guide.md 1.1) ---
+
+	/** Buffered presses older than this are dropped (seconds). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Input",
+	          meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float BufferedActionExpiry = 0.3f;
+
+	// --- Cancel window (guide.md 3.2) ---
+	// State lives HERE, not on ANS_CancelWindow — notify-state instance members
+	// proved unreliable in UE5 (the ANS_DealDamage pattern).
+
+	/** Called by ANS_CancelWindow. Opening the window drains the buffered-action
+	 *  queue, so a dodge pressed during startup fires the exact frame recovery
+	 *  becomes cancelable — the most feel-critical hookup in Phase 3. */
+	void SetCancelWindowOpen(bool bOpen);
+
+	UFUNCTION(BlueprintPure, Category = "Combat|Animation")
+	bool IsCancelWindowOpen() const { return bCancelWindowOpen; }
 
 	// --- Combo / Montage System ---
 
@@ -274,10 +343,38 @@ private:
 	int32 ComboStep = 0;
 	bool bIsAttacking = false;
 	bool bComboWindowOpen = false;
-	bool bInputBuffered = false;
 	bool bInAttackCooldown = false;
 	FTimerHandle ComboWindowTimerHandle;
 	FTimerHandle CooldownTimerHandle;
+
+	// --- Buffered-action queue (guide.md 1.1) ---
+	// Single typed slot (replaces the old attack-only bInputBuffered flag).
+	// Producers: RequestAttack / RequestDodge / SetBlocking(true) when the press
+	// can't legally fire right now. Consumers ("first legal frame" sites):
+	// OpenComboWindow, OnMontageEnded/BlendingOut, ClearCooldown, dodge end, and
+	// SetCancelWindowOpen(true).
+	FBufferedAction BufferedAction;
+	void BufferAction(ECombatActionType Type);
+	bool TryConsumeBufferedAction();
+
+	/** True if the buffered slot holds this type and hasn't expired yet. */
+	bool HasFreshBufferedAction(ECombatActionType Type) const;
+
+	// Open while an ANS_CancelWindow bar is active on the current attack montage.
+	// Defensively forced false in PlayComboMontage / OnMontageEnded / ResetCombo —
+	// montage interruption can skip NotifyEnd, and a stuck-open window is an
+	// everything-cancels bug.
+	bool bCancelWindowOpen = false;
+
+	// Dodge i-frames (guide.md 3.5). SEPARATE from bIsInvulnerable on purpose —
+	// that bool is owned by ResetForNewRound/InvulnTimerHandle. Cleared
+	// defensively in OnDodgeMontageEnded and ResetForNewRound so an interrupted
+	// dodge can't leak i-frames.
+	bool bDodgeInvulnerable = false;
+
+	// World time (GetTimeSeconds) when the guard was last RAISED. Parry = a
+	// frontal hit landing within ParryWindow of this stamp.
+	double LastBlockStartTime = -1000.0;
 
 	// --- Post-reset invulnerability ---
 	// Set true by ResetForNewRound for PostResetInvulnerabilityDuration seconds.

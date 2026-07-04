@@ -6,6 +6,8 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "CollisionQueryParams.h"
 #include "DrawDebugHelpers.h"
+#include "EngineUtils.h"
+#include "GameFramework/Pawn.h"
 
 UANS_DealDamage::UANS_DealDamage()
 {
@@ -70,12 +72,36 @@ void UANS_DealDamage::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequence
 		End   = Start + OwnerActor->GetActorForwardVector() * TraceForwardOffset;
 	}
 
+	// Faction = the "Enemy" actor tag (project convention: BP_Boss and minions
+	// carry it, the hero doesn't). Two actors on the same side of that test are
+	// teammates and must neither take nor absorb this swing.
+	static const FName EnemyFactionTag(TEXT("Enemy"));
+	const bool bOwnerIsEnemyFaction = OwnerActor->ActorHasTag(EnemyFactionTag);
+
 	FCollisionQueryParams QueryParams;
 	QueryParams.AddIgnoredActor(OwnerActor);
 
-	FHitResult HitResult;
-	const bool bHit = World->SweepSingleByChannel(
-		HitResult,
+	// Ignore ALL same-team pawns so a friendly capsule can't BLOCK the sweep and
+	// shadow the real target standing behind it (a blocking hit ends even a
+	// multi-sweep). With several minions crowding one hero this is routine.
+	for (TActorIterator<APawn> PawnIt(World); PawnIt; ++PawnIt)
+	{
+		APawn* OtherPawn = *PawnIt;
+		if (OtherPawn && OtherPawn != OwnerActor
+			&& OtherPawn->ActorHasTag(EnemyFactionTag) == bOwnerIsEnemyFaction)
+		{
+			QueryParams.AddIgnoredActor(OtherPawn);
+		}
+	}
+
+	// SweepMulti, not SweepSingle: with several same-team pawns in play (the
+	// minion encounters), a friendly body inside the sphere must not SHADOW the
+	// real target — the sweep has to be able to look past allies. SweepSingle
+	// let minion B eat minion A's swing (friendly fire) AND consume A's per-swing
+	// hit token, so the hero took nothing that swing.
+	TArray<FHitResult> HitResults;
+	const bool bHit = World->SweepMultiByChannel(
+		HitResults,
 		Start,
 		End,
 		FQuat::Identity,
@@ -102,16 +128,35 @@ void UANS_DealDamage::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequence
 		return;
 	}
 
-	AActor* HitActor = HitResult.GetActor();
-	if (!HitActor) return;
+	// Pick the first HOSTILE, damageable actor along the sweep.
+	// - Same-faction hits are skipped (belt-and-braces on top of the ignore list
+	//   above): minion↔minion and minion↔boss hits never land, so packed minions
+	//   can't whittle each other down or inject damage the RL bridge never chose.
+	// - Skip non-combat hits (landscape, walls, props). Without this, a swing
+	//   whose trace grazed the ground caught LandscapeStreamingProxy on its first
+	//   tick, consumed the per-swing hit token via MarkHitLanded, and never got
+	//   another chance to hit the boss on later ticks — the symptom was "combo
+	//   step 3 deals no damage".
+	// MarkHitLanded only fires once a confirmed hostile target is found, so a
+	// friendly/prop overlap never steals the swing token.
+	AActor* HitActor = nullptr;
+	UCombatComponent* TargetCombat = nullptr;
+	for (const FHitResult& Hit : HitResults)
+	{
+		AActor* Candidate = Hit.GetActor();
+		if (!Candidate) continue;
 
-	// Skip non-combat hits (landscape, walls, props). Without this, a swing whose
-	// trace grazes the ground caught LandscapeStreamingProxy on its first tick,
-	// consumed the per-swing hit token via MarkHitLanded, and never got another
-	// chance to hit the boss on later ticks — the symptom was "combo step 3 deals
-	// no damage" because Hit3's trace dipped low enough to catch terrain first.
-	UCombatComponent* TargetCombat = HitActor->FindComponentByClass<UCombatComponent>();
-	if (!TargetCombat) return;
+		// Same team — friendly bodies don't take (or absorb) the hit.
+		if (Candidate->ActorHasTag(EnemyFactionTag) == bOwnerIsEnemyFaction) continue;
+
+		UCombatComponent* CandidateCombat = Candidate->FindComponentByClass<UCombatComponent>();
+		if (!CandidateCombat) continue;
+
+		HitActor = Candidate;
+		TargetCombat = CandidateCombat;
+		break;
+	}
+	if (!HitActor || !TargetCombat) return;
 
 	// Lock out further hits this swing immediately (only after confirming the
 	// hit is on a damageable target).
@@ -120,13 +165,16 @@ void UANS_DealDamage::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequence
 		AttackerCombatGuard->MarkHitLanded();
 	}
 
-	// Look up damage from the attacker's current combo step
+	// Look up damage from the attacker's current combo step. AttackData is kept
+	// in scope past this block — the hit-feedback call site below reads its
+	// per-attack HitStopDuration/CameraShakeScale (guide.md 3.4).
 	float DamageAmount = 10.0f;
 	FName DamageType = FName(TEXT("Light"));
+	const FAttackAnimData* AttackData = nullptr;
 
 	if (AttackerCombatGuard && AttackerCombatGuard->CombatConfig)
 	{
-		const FAttackAnimData* AttackData = AttackerCombatGuard->CombatConfig->GetAttackData(AttackerCombatGuard->GetComboStep());
+		AttackData = AttackerCombatGuard->CombatConfig->GetAttackData(AttackerCombatGuard->GetComboStep());
 		if (AttackData)
 		{
 			DamageAmount = AttackData->DamageAmount;
@@ -142,12 +190,13 @@ void UANS_DealDamage::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequence
 	const float TargetHPBefore = TargetCombat ? TargetCombat->CurrentHealth : -1.0f;
 	const bool bBlocked = TargetCombat && TargetCombat->IsBlockingAgainst(OwnerActor);
 
-	// A hit on an invulnerable (just-respawned grace window) or already-dead
-	// target is a no-op for health. Suppress the flinch + hit-stop too, otherwise
-	// the target visibly reacts while its HP bar never moves — the "hit reaction
-	// but no damage" confusion. Sampled BEFORE ApplyDamage so a hit that takes the
-	// target to 0 still plays its reaction this swing.
-	const bool bNoOpHit = TargetCombat && (TargetCombat->IsInvulnerable() || TargetCombat->IsDead());
+	// A hit on an invulnerable (just-respawned grace window OR mid-dodge i-frames)
+	// or already-dead target is a no-op for health. Suppress the flinch + hit-stop
+	// too, otherwise the target visibly reacts while its HP bar never moves — the
+	// "hit reaction but no damage" confusion (and a flinch would interrupt the
+	// dodge the i-frames just rewarded). Sampled BEFORE ApplyDamage so a hit that
+	// takes the target to 0 still plays its reaction this swing.
+	const bool bNoOpHit = TargetCombat && (TargetCombat->IsInvulnerable() || TargetCombat->IsDodgeInvulnerable() || TargetCombat->IsDead());
 
 	if (TargetCombat)
 	{
@@ -178,10 +227,30 @@ void UANS_DealDamage::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequence
 
 	// Trigger hit feedback (hit stop, camera shake) — skip on no-op hits so a
 	// swing into a respawned/dead target doesn't stutter time for nothing.
+	// Weight is per-attack data (guide.md 3.4): chain finishers route through the
+	// heavy tier so they VISIBLY hit harder than openers; every other attack
+	// passes its FAttackAnimData feedback numbers through. Single-entry chains
+	// (boss/minion one-swing configs) are openers, not finishers — without the
+	// length check every boss hit would read as a finisher.
 	UHitFeedbackComponent* TargetFeedback = HitActor->FindComponentByClass<UHitFeedbackComponent>();
 	if (TargetFeedback && !bNoOpHit)
 	{
-		TargetFeedback->TriggerHitFeedback(OwnerActor);
+		const bool bComboFinisher = AttackerCombatGuard && AttackerCombatGuard->CombatConfig
+			&& AttackerCombatGuard->CombatConfig->GetComboLength() > 1
+			&& AttackerCombatGuard->GetComboStep() == AttackerCombatGuard->CombatConfig->GetComboLength() - 1;
+
+		if (bComboFinisher)
+		{
+			TargetFeedback->TriggerHeavyHitFeedback(OwnerActor);
+		}
+		else if (AttackData)
+		{
+			TargetFeedback->TriggerHitFeedback(OwnerActor, AttackData->HitStopDuration, AttackData->CameraShakeScale);
+		}
+		else
+		{
+			TargetFeedback->TriggerHitFeedback(OwnerActor);
+		}
 	}
 }
 

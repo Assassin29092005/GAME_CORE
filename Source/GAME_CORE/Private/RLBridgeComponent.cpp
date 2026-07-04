@@ -8,6 +8,7 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Kismet/GameplayStatics.h"
+#include "ProfilingDebugging/CpuProfilerTrace.h"
 
 URLBridgeComponent::URLBridgeComponent()
 {
@@ -45,6 +46,10 @@ void URLBridgeComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 			}
 			ClientSocket = PendingClientSocket;
 			PendingClientSocket = nullptr;
+			// Phase 0.2: make it explicit that nothing on this socket can stall the game
+			// thread. Recv is already guarded by HasPendingData, but FSocket::Send could
+			// block if the OS send buffer ever filled — non-blocking closes that hole.
+			ClientSocket->SetNonBlocking(true);
 			ReceiveBuffer.Empty();
 			UE_LOG(LogTemp, Log, TEXT("RLBridge: Client connection established"));
 		}
@@ -108,6 +113,10 @@ bool URLBridgeComponent::OnConnectionAccepted(FSocket* InSocket, const FIPv4Endp
 
 void URLBridgeComponent::ProcessIncomingData()
 {
+	// Phase 0.2: named scope so Unreal Insights can show what the bridge costs per
+	// tick (JSON parse + observation collection all happen downstream of here).
+	TRACE_CPUPROFILER_EVENT_SCOPE(RLBridge_ProcessIncomingData);
+
 	if (!ClientSocket) return;
 
 	uint32 PendingDataSize = 0;
@@ -209,7 +218,31 @@ void URLBridgeComponent::HandleObserveRequest()
 	UStateObservationComponent* ObsComp = Owner->FindComponentByClass<UStateObservationComponent>();
 	if (ObsComp)
 	{
-		SendObservation(ObsComp->GetObservationJson());
+		FString Json = ObsComp->GetObservationJson();
+
+		// Phase 4.3: ship the legal-action mask alongside the observation so Python
+		// (MaskablePPO) can learn with the exact legality filter C++ enforces at
+		// execution — closing the train/inference mismatch. Injected here (the bridge
+		// ships the payload; BossActionComponent owns the legality logic) rather than
+		// in FRLObservation, which stays a pure state snapshot.
+		if (UBossActionComponent* BossAction = Owner->FindComponentByClass<UBossActionComponent>())
+		{
+			const TArray<bool> Mask = BossAction->GetLegalActionMask();
+			FString MaskStr = TEXT("[");
+			for (int32 i = 0; i < Mask.Num(); ++i)
+			{
+				MaskStr += Mask[i] ? TEXT("1") : TEXT("0");
+				if (i < Mask.Num() - 1) MaskStr += TEXT(",");
+			}
+			MaskStr += TEXT("]");
+
+			if (Json.EndsWith(TEXT("}")))
+			{
+				Json = Json.LeftChop(1) + TEXT(",\"mask\":") + MaskStr + TEXT("}");
+			}
+		}
+
+		SendObservation(Json);
 	}
 	else
 	{

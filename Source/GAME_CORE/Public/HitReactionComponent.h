@@ -108,6 +108,16 @@ public:
 	UFUNCTION(BlueprintPure, Category = "HitReaction")
 	float GetCurrentStagger() const { return CurrentStagger; }
 
+	/** Phase 4.5 hyper-armor: while active, Light hit reactions are suppressed (no
+	 *  flinch) but damage and stagger still accumulate — sustained pressure can still
+	 *  punch a Medium/Heavy through. Driven by ANS_HyperArmor on the boss's heavy
+	 *  attack montages, covering the active frames. */
+	UFUNCTION(BlueprintCallable, Category = "HitReaction")
+	void SetHyperArmor(bool bActive) { bHyperArmorActive = bActive; }
+
+	UFUNCTION(BlueprintPure, Category = "HitReaction")
+	bool IsHyperArmorActive() const { return bHyperArmorActive; }
+
 	/** True from the moment a hit-reaction montage starts until it finishes AND the grace
 	 *  period elapses. BossActionComponent reads this to lock out RL actions while the boss
 	 *  is flinching, so an Attack arriving from the bridge mid-reaction doesn't pop into the
@@ -129,6 +139,11 @@ private:
 	float CurrentStagger = 0.0f;
 
 	bool bIsReacting = false;
+
+	/** Phase 4.5: state lives here, not on the notify state — UAnimNotifyState instance
+	 *  members are unreliable in UE5 (the ANS_DealDamage lesson). Cleared in
+	 *  ResetForNewRound so an interrupted attack can't leave armor stuck on. */
+	bool bHyperArmorActive = false;
 
 	/** World time (seconds) at which the last reaction montage ended. IsReacting() uses this
 	 *  with HitReactionGracePeriod to keep the lockout active for a short window after the

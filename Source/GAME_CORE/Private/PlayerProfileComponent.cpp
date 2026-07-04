@@ -1,6 +1,7 @@
 #include "PlayerProfileComponent.h"
 #include "CombatComponent.h"
 #include "GameFramework/Character.h"
+#include "EngineUtils.h"
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonWriter.h"
 #include "Serialization/JsonSerializer.h"
@@ -82,6 +83,37 @@ void FPlayerProfile::SetDimension(int32 Index, float Value)
 // UPlayerProfileComponent
 // ============================================================================
 
+// Nearest live combatant tagged "Enemy" (the LockOnComponent convention) —
+// fallback opponent for distance sampling when BossActor is unset or dead, so
+// KitingScore keeps measuring real data during NPC-minion fights instead of
+// freezing at 0.5 (or measuring distance to a corpse across the arena).
+// Called at the 4 Hz sample cadence, so the actor iteration is cheap enough.
+static AActor* FindNearestLiveOpponent(const AActor* Owner)
+{
+	if (!Owner || !Owner->GetWorld()) return nullptr;
+
+	AActor* Best = nullptr;
+	float BestDistSq = TNumericLimits<float>::Max();
+	const FVector OwnerLoc = Owner->GetActorLocation();
+
+	for (TActorIterator<AActor> It(Owner->GetWorld()); It; ++It)
+	{
+		AActor* Actor = *It;
+		if (!Actor || Actor == Owner || !Actor->ActorHasTag(FName(TEXT("Enemy")))) continue;
+
+		const UCombatComponent* Combat = Actor->FindComponentByClass<UCombatComponent>();
+		if (!Combat || Combat->IsDead()) continue;
+
+		const float DistSq = FVector::DistSquared(OwnerLoc, Actor->GetActorLocation());
+		if (DistSq < BestDistSq)
+		{
+			BestDistSq = DistSq;
+			Best = Actor;
+		}
+	}
+	return Best;
+}
+
 UPlayerProfileComponent::UPlayerProfileComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
@@ -122,9 +154,23 @@ void UPlayerProfileComponent::TickComponent(float DeltaTime, ELevelTick TickType
 	EncounterStepCount++;
 
 	// --- Distance sampling ---
-	if (BossActor)
+	// BossActor is the BP-assigned default opponent. When it's unset or dead
+	// (NPC-minion fights, boss down between rounds), fall back to the nearest
+	// live "Enemy"-tagged combatant so dim 5 samples the actual fight.
+	AActor* Opponent = BossActor;
 	{
-		const float Dist = FVector::Dist(Owner->GetActorLocation(), BossActor->GetActorLocation());
+		const UCombatComponent* BossCombat = BossActor
+			? BossActor->FindComponentByClass<UCombatComponent>()
+			: nullptr;
+		if (!BossActor || (BossCombat && BossCombat->IsDead()))
+		{
+			Opponent = FindNearestLiveOpponent(Owner);
+		}
+	}
+
+	if (Opponent)
+	{
+		const float Dist = FVector::Dist(Owner->GetActorLocation(), Opponent->GetActorLocation());
 		if (Dist < MeleeRangeThreshold)
 		{
 			MeleeSamples++;

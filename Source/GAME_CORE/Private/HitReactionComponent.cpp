@@ -55,8 +55,25 @@ void UHitReactionComponent::PlayHitReaction(AActor* InstigatorActor, float Damag
 	// immediately escalate its own reaction
 	EStaggerIntensity Intensity = DetermineStaggerIntensity(DamageAmount, DamageType);
 
-	// Accumulate stagger after intensity determination
-	CurrentStagger += DamageAmount;
+	// Accumulate stagger after intensity determination. Parry is exempt: its
+	// reaction is already forced Heavy by DetermineStaggerIntensity, and letting
+	// its 61 nominal points accumulate would prime the NEXT unrelated ordinary
+	// hit to escalate straight to Heavy (orphaned-stagger bug).
+	if (DamageType != FName(TEXT("Parry")))
+	{
+		CurrentStagger += DamageAmount;
+	}
+
+	// Phase 4.5 hyper-armor: during a heavy attack's active frames, Light reactions
+	// don't play — the boss can't be flinch-locked out of its heaviest swings. Damage
+	// was applied upstream and stagger accumulated just above, so sustained pressure
+	// still escalates to Medium/Heavy, which punches through the armor. Deliberately
+	// AFTER the OnHitReactionTriggered broadcast (top of function) so
+	// PlayerProfileComponent still sees the hit.
+	if (bHyperArmorActive && Intensity == EStaggerIntensity::Light)
+	{
+		return; // armor through it — no montage
+	}
 
 	// Combo finisher triggers knockback
 	if (DamageType == FName(TEXT("ComboFinisher")) && KnockbackMontage)
@@ -134,6 +151,8 @@ void UHitReactionComponent::ResetForNewRound()
 	CurrentStagger = 0.0f;
 	bIsReacting = false;
 	CurrentReactionMontage = nullptr;
+	// An attack interrupted by the round ending must not leave hyper-armor stuck on.
+	bHyperArmorActive = false;
 	// Push the end time far into the past so the grace period is already expired
 	// at the start of the new round.
 	LastReactionEndTime = -1000.0f;
@@ -165,6 +184,17 @@ EStaggerIntensity UHitReactionComponent::DetermineStaggerIntensity(float DamageA
 {
 	// Heavy damage type always triggers heavy reaction
 	if (DamageType == FName(TEXT("Heavy")))
+	{
+		return EStaggerIntensity::Heavy;
+	}
+
+	// Parry (guide.md 3.5): the parry counter is a guaranteed heavy stagger.
+	// Without this case the parry's 61 points resolved from CURRENT (pre-hit)
+	// stagger — usually Light — which the hyper-armor gate then swallowed
+	// entirely, so the promised punish window never happened. Heavy also
+	// bypasses the Light-only hyper-armor gate by construction, matching the
+	// "parry pierces armor" contract in CombatComponent's parry branch.
+	if (DamageType == FName(TEXT("Parry")))
 	{
 		return EStaggerIntensity::Heavy;
 	}

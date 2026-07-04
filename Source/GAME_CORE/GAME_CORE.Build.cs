@@ -8,7 +8,20 @@ public class GAME_CORE : ModuleRules
         PublicDependencyModuleNames.AddRange(new string[] {
             "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput",
             "MotionWarping", "Mover",
+            "EngineCameras",  // UDefaultCameraShakeBase / PerlinNoiseCameraShakePattern moved here in UE 5.8
+            "DeveloperSettings",  // UGameFeelSettings : UDeveloperSettings
+            "AIModule", "NavigationSystem", "GameplayTasks",
+            "UMG", "Slate", "SlateCore",
             "Sockets", "Networking", "Json", "JsonUtilities"
         });
+
+        // Editor-only deps (ArenaEditorTools brush spawning). Guarded so
+        // packaged / -game builds never link editor modules.
+        if (Target.bBuildEditor)
+        {
+            PrivateDependencyModuleNames.AddRange(new string[] {
+                "UnrealEd", "EditorFramework"
+            });
+        }
     }
 }

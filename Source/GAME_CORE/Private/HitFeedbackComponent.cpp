@@ -1,5 +1,6 @@
 #include "HitFeedbackComponent.h"
 #include "Animation/AnimInstance.h"
+#include "CameraShakes.h"
 #include "GameFramework/Character.h"
 #include "Kismet/GameplayStatics.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -11,9 +12,15 @@ UHitFeedbackComponent::UHitFeedbackComponent()
 
 void UHitFeedbackComponent::TriggerHitFeedback(AActor* Attacker)
 {
+	// No-argument path (BP callers, boss/minion hits): component defaults.
+	TriggerHitFeedback(Attacker, HitStopDuration, CameraShakeScale);
+}
+
+void UHitFeedbackComponent::TriggerHitFeedback(AActor* Attacker, float StopDuration, float ShakeScale)
+{
 	if (bEnableHitStop)
 	{
-		ApplyHitStop(HitStopDuration, HitStopTimeDilation);
+		ApplyHitStop(StopDuration, HitStopTimeDilation);
 	}
 
 	if (bPauseAttackerAnim && Attacker)
@@ -21,10 +28,7 @@ void UHitFeedbackComponent::TriggerHitFeedback(AActor* Attacker)
 		PauseAttackerAnim(Attacker, AnimPauseDuration);
 	}
 
-	if (HitCameraShake)
-	{
-		PlayCameraShake(CameraShakeScale);
-	}
+	PlayCameraShake(ShakeScale);
 }
 
 void UHitFeedbackComponent::TriggerHeavyHitFeedback(AActor* Attacker)
@@ -40,10 +44,7 @@ void UHitFeedbackComponent::TriggerHeavyHitFeedback(AActor* Attacker)
 		PauseAttackerAnim(Attacker, AnimPauseDuration * 2.0f);
 	}
 
-	if (HitCameraShake)
-	{
-		PlayCameraShake(CameraShakeScale * 1.5f);
-	}
+	PlayCameraShake(CameraShakeScale * 1.5f, /*bHeavy*/ true);
 }
 
 void UHitFeedbackComponent::ApplyHitStop(float Duration, float Dilation)
@@ -136,11 +137,21 @@ void UHitFeedbackComponent::ResumeAttackerAnim()
 	PendingResumeAttacker.Reset();
 }
 
-void UHitFeedbackComponent::PlayCameraShake(float Scale)
+void UHitFeedbackComponent::PlayCameraShake(float Scale, bool bHeavy)
 {
 	APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0);
-	if (PC && HitCameraShake)
+	if (!PC) return;
+
+	// BP-assigned shake wins; otherwise the code-only defaults (guide.md 3.4)
+	// keep camera punch working with zero content setup.
+	TSubclassOf<UCameraShakeBase> ShakeClass = HitCameraShake;
+	if (!ShakeClass)
 	{
-		PC->ClientStartCameraShake(HitCameraShake, Scale);
+		ShakeClass = bHeavy ? UCS_HitHeavy::StaticClass() : UCS_HitLight::StaticClass();
+	}
+
+	if (ShakeClass)
+	{
+		PC->ClientStartCameraShake(ShakeClass, Scale);
 	}
 }
