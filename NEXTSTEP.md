@@ -57,6 +57,12 @@ powershell -ExecutionPolicy Bypass -File Tools\run_training.ps1 -Persona rusher 
 > tonight's 41k-step run, imported as `NNM_BossRusher`, wired as the default model, and
 > verified in-world: `NNEBossPolicy: ready — model 'NNM_BossRusher' at 15 Hz`. Remaining
 > personas follow this same flow (import script now takes NNE_ONNX_SRC/NNE_ASSET_NAME env).
+> **02:05 (iter 3): turtle 110k promoted AND made the DEFAULT brain** — eval_archetypes.py
+> (new, runnable anytime) scored turtle 40-0 vs the scripted duel (balanced 22/50/28
+> attack/block/retreat kit); rusher (41k) is a dodge-only evasion specialist (needs more
+> steps). Kiter training since 01:45. QUEUED FOR NEXT TRAINING GAP: Build.bat the
+> code-only archetype-bank batch (+ apply mean-centered cosine per eval verifier),
+> import NNM_BossKiter, re-measure centroids from replays.
 > Small C++ TODO for the next build batch: `boss.NNESelfTest`'s pre-world fallback should
 > read GameFeelSettings.NNEBossModelData instead of its hardcoded untrained path.
 
