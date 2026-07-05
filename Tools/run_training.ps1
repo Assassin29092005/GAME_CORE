@@ -43,6 +43,14 @@ New-Item -ItemType Directory -Force $LogDir | Out-Null
 $ueArgs = @()
 if ($MapName -ne "") { $ueArgs += $MapName }
 $ueArgs += @("-game", "-windowed", "-ResX=$ResX", "-ResY=$ResY", "-nosplash", "-log")
+# -rlbridge: deterministically disable the NNE boss policy for the whole run —
+#   the TCP bridge (or its scripted fallback brain) owns the boss, including the
+#   crash-restart gaps where train.py is down (NNEBossPolicyComponent stands
+#   down at BeginPlay instead of relying on the per-decision socket poll).
+# -NoTelemetry: sparring-bot rounds must never queue under Saved/Telemetry/ —
+#   they would inflate users/{uid}/fights and skew the meta/global community
+#   difficulty aggregates if this machine ever signs in.
+$ueArgs += @("-rlbridge", "-NoTelemetry")
 if ($Persona -ne "") { $ueArgs += "-AutoHero=$Persona" }
 
 function Stop-Pair($ue, $py) {

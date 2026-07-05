@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DeveloperSettings.h"
+#include "UObject/SoftObjectPath.h"
 #include "GameFeelSettings.generated.h"
 
 /**
@@ -38,6 +39,19 @@ public:
 	/** Self-install UCombatCameraComponent on the player pawn. */
 	UPROPERTY(EditAnywhere, Config, Category = "Toggles")
 	bool bEnableCombatCamera = true;
+
+	/** M5: self-install UNNEBossPolicyComponent on the boss (in-engine ONNX brain,
+	 *  no Python). Safe to leave on for training too — the component self-disables
+	 *  under -rlbridge and stands aside while the Python TCP client is connected. */
+	UPROPERTY(EditAnywhere, Config, Category = "Toggles")
+	bool bEnableNNEBoss = true;
+
+	/** Default UNNEModelData asset the injected NNE boss policy loads when its
+	 *  ModelData/ArchetypeBank are unset (the auto-injected component has no BP
+	 *  property pass, so this is its wiring point). Empty = component stays
+	 *  dormant and the scripted fallback brain covers the boss. */
+	UPROPERTY(EditAnywhere, Config, Category = "Toggles", meta = (AllowedClasses = "/Script/NNE.NNEModelData"))
+	FSoftObjectPath NNEBossModelData;
 
 	/** Let UCombatCameraComponent push the guide.md 5.1 defaults onto the hero's
 	 *  SpringArm/Camera at BeginPlay (lag 9/10, max lag distance 75, substepping,

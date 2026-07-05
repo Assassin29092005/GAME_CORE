@@ -12,6 +12,8 @@ public class GAME_CORE : ModuleRules
             "DeveloperSettings",  // UGameFeelSettings : UDeveloperSettings
             "AIModule", "NavigationSystem", "GameplayTasks",
             "UMG", "Slate", "SlateCore",
+            "NNE",   // M5: NNEBossPolicyComponent in-engine ONNX inference
+            "HTTP",  // M6: Firebase REST auth + Firestore telemetry upload
             "Sockets", "Networking", "Json", "JsonUtilities"
         });
 

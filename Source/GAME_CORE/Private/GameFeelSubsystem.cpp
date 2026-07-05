@@ -6,6 +6,7 @@
 #include "Engine/World.h"
 #include "GameFeelSettings.h"
 #include "Kismet/GameplayStatics.h"
+#include "NNEBossPolicyComponent.h"
 #include "TimerManager.h"
 
 bool UGameFeelSubsystem::ShouldCreateSubsystem(UObject* Outer) const
@@ -17,7 +18,7 @@ bool UGameFeelSubsystem::ShouldCreateSubsystem(UObject* Outer) const
 	if (!World || !World->IsGameWorld()) return false;
 
 	const UGameFeelSettings* Settings = GetDefault<UGameFeelSettings>();
-	return Settings->bEnableCombatCamera || Settings->bEnableBossStatusHUD;
+	return Settings->bEnableCombatCamera || Settings->bEnableBossStatusHUD || Settings->bEnableNNEBoss;
 }
 
 void UGameFeelSubsystem::OnWorldBeginPlay(UWorld& InWorld)
@@ -86,9 +87,29 @@ void UGameFeelSubsystem::TryInstall()
 		}
 	}
 
+	// M5: inject the NNE boss policy alongside the HUD (same boss-discovery rule).
+	// Stateless guard on purpose — presence-of-component IS the installed flag, so
+	// this block lives entirely in the .cpp (no new header member). The component
+	// self-disables under -rlbridge / while the Python client is connected, so
+	// injecting it unconditionally is training-safe.
+	bool bNNEDone = !Settings->bEnableNNEBoss;
+	if (Settings->bEnableNNEBoss)
+	{
+		if (AActor* Boss = FindBossActor(World))
+		{
+			if (!Boss->FindComponentByClass<UNNEBossPolicyComponent>())
+			{
+				UNNEBossPolicyComponent* PolicyComp =
+					NewObject<UNNEBossPolicyComponent>(Boss, TEXT("NNEBossPolicyComponent"));
+				PolicyComp->RegisterComponent();
+			}
+			bNNEDone = true;
+		}
+	}
+
 	const bool bCameraDone = bCameraInstalled || !Settings->bEnableCombatCamera;
 	const bool bHUDDone = bHUDInstalled || !Settings->bEnableBossStatusHUD;
-	if (bCameraDone && bHUDDone)
+	if (bCameraDone && bHUDDone && bNNEDone)
 	{
 		World->GetTimerManager().ClearTimer(InstallTimerHandle);
 	}
