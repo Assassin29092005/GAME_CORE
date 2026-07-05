@@ -230,6 +230,20 @@ Remaining for M4 done-criteria: run the builder script in the editor, place BP_N
 + BP_Boss in BossArena, exposure-band fine-tune, 60 fps fight verification (`stat unit`),
 grayscale readability test, then optional decals/foliage/Niagara passes per visuals.md.
 
+> **Status (2026-07-05): M4 visual pass shipped** (terrain material v2, 24.5k ground-cover
+> instances, clouds/grade/fire-lights, floor ring + mountain backdrop, 508 dressed actors —
+> perf still needs a stat-unit fight check). **M5 CODE COMPLETE + self-test PASS**:
+> `NNEBossPolicyComponent` (mask-aware ORT inference, archetype bank, bridge-outranks-NNE
+> arbitration, auto-injected; `boss.NNESelfTest` verified vs the untrained
+> `NNM_BossUntrained` test brain — real checkpoints are a drop-in via
+> `make_test_onnx.py`-style export + `Tools/import_onnx_model.py`). **M6 GAME SIDE CODE
+> COMPLETE**: FirebaseAuthSubsystem (REST + guest), Slate login, TelemetryUploadSubsystem
+> (offline-first queue; taunts/profile/emotion per round; free-tier meta/global increments),
+> CommunityDifficultySubsystem — remaining: create the Firebase project + paste
+> WebApiKey/ProjectId (NEXTSTEP Part 7). **M7**: taunt panel + World page built, build green
+> — remaining: firebase deploy. Audio 7.1 placeholder pass done. Fab packs are gitignored
+> vendored content (re-add from the library on fresh clones).
+
 ## M5 — Boss in-engine: ONNX + NNE *(3–5 days)*
 
 **Goal:** the shipped game runs the boss with **no Python anywhere**.
