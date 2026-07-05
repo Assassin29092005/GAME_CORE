@@ -398,6 +398,7 @@ a.editorial-link:hover {
 .d4 { animation-delay: 0.46s; }
 .d5 { animation-delay: 0.6s; }
 .d6 { animation-delay: 0.74s; }
+.d7 { animation-delay: 0.88s; }
 
 @keyframes rise {
   to {
@@ -552,12 +553,14 @@ a.editorial-link:hover {
 .col-stats { grid-column: span 4; }
 .col-radar { grid-column: span 8; }
 .col-affect { grid-column: span 12; }
+.col-taunts { grid-column: span 12; }
 .col-log { grid-column: span 12; }
 
 @media (max-width: 980px) {
   .col-stats,
   .col-radar,
   .col-affect,
+  .col-taunts,
   .col-log {
     grid-column: 1 / -1;
   }
@@ -1207,6 +1210,178 @@ a.editorial-link:hover {
   color: var(--ember);
   line-height: 1;
   letter-spacing: -0.04em;
+}
+
+/* ── Boss taunts ("What the boss says about you") ───────────────────── */
+
+.taunt-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 28px;
+}
+
+.taunt {
+  position: relative;
+  padding: 26px 22px 20px 26px;
+  border-left: 1px solid var(--hair);
+}
+
+.taunt::before {
+  content: "\201C";
+  position: absolute;
+  top: -8px;
+  left: 10px;
+  font-family: var(--serif);
+  font-variation-settings: "opsz" 144, "SOFT" 0, "WONK" 1;
+  font-style: italic;
+  font-size: 64px;
+  line-height: 1;
+  color: var(--ember);
+  opacity: 0.5;
+}
+
+.taunt .text {
+  font-family: var(--serif);
+  font-variation-settings: "opsz" 60, "SOFT" 50, "WONK" 1;
+  font-style: italic;
+  font-size: 18px;
+  line-height: 1.45;
+  color: var(--bone);
+  letter-spacing: -0.005em;
+}
+
+.taunt .meta {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--mute);
+}
+
+/* ── World page (community evolution) ───────────────────────────────── */
+
+.world-callout {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 44px;
+  align-items: center;
+  padding: 32px 48px 32px 40px;
+  background: linear-gradient(90deg, var(--verdigris-dim), transparent 75%);
+  border-left: 2px solid var(--verdigris);
+  margin-bottom: 56px;
+}
+
+.world-callout .lv {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.world-callout .lv-tag {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.32em;
+  color: var(--verdigris);
+  text-transform: uppercase;
+}
+
+.world-callout .lv-num {
+  font-family: var(--serif);
+  font-variation-settings: "opsz" 144, "SOFT" 30, "WONK" 1;
+  font-style: italic;
+  font-size: 96px;
+  font-weight: 400;
+  line-height: 0.9;
+  letter-spacing: -0.04em;
+  color: var(--verdigris-bright);
+}
+
+.world-callout .who {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  color: var(--verdigris);
+  margin-bottom: 12px;
+}
+
+.world-callout .lv-copy p {
+  font-family: var(--serif);
+  font-variation-settings: "opsz" 60, "SOFT" 40, "WONK" 1;
+  font-size: clamp(17px, 1.7vw, 21px);
+  font-style: italic;
+  line-height: 1.5;
+  color: var(--bone-dim);
+}
+
+.world-callout .lv-copy b {
+  color: var(--bone);
+  font-weight: 500;
+  font-style: normal;
+}
+
+@media (max-width: 760px) {
+  .world-callout {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+}
+
+.world-note {
+  margin-top: 18px;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.7;
+  letter-spacing: 0.06em;
+  color: var(--mute);
+}
+
+/* ── Radar comparison (self vs community) ───────────────────────────── */
+
+.radar-legend {
+  display: flex;
+  gap: 28px;
+  margin-top: 14px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+}
+
+.radar-legend span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.radar-legend span i {
+  display: inline-block;
+  width: 18px;
+  height: 2px;
+}
+
+.radar-legend .verd { color: var(--verdigris-bright); }
+.radar-legend .verd i { background: var(--verdigris-bright); }
+.radar-legend .emb { color: var(--ember-bright); }
+.radar-legend .emb i { background: var(--ember); }
+
+.dim .bar .ref-mark {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 1.5px;
+  background: var(--ember);
+  transform: translateX(-50%);
+}
+
+.dim .val .ref-val {
+  color: var(--ember);
+  font-size: 9px;
+  letter-spacing: 0.02em;
 }
 
 /* ── Recharts dark-paper polish ─────────────────────────────────────── */

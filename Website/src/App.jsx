@@ -3,6 +3,7 @@ import { useAuth } from "./useAuth.jsx";
 import Layout from "./components/Layout.jsx";
 import Login from "./pages/Login.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
+import World from "./pages/World.jsx";
 import Download from "./pages/Download.jsx";
 
 function Guard({ children }) {
@@ -31,6 +32,7 @@ export default function App() {
         }
       >
         <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/world" element={<World />} />
         <Route path="/download" element={<Download />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Route>

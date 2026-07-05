@@ -49,3 +49,36 @@ export const DEMO_FIGHTS = [
   fight(9.6, 92, "npc", "loss", 8, 0, 0.55, 0.33, 0.12),
   fight(10.4, 61, "npc", "win", 0, 52, 0.20, 0.41, 0.39),
 ];
+
+// Canned taunts — what the boss "said" during the most recent boss fights.
+// Real fights carry an optional `taunts: string[]` field (see Website/README.md);
+// demo mode gets three lines so the Dossier panel always has a voice.
+DEMO_FIGHTS[0].taunts = [
+  "You dodge on rhythm, not on read. I counted the beats.",
+];
+DEMO_FIGHTS[1].taunts = [
+  "Your guard drops after the third swing. It always has.",
+];
+DEMO_FIGHTS[3].taunts = [
+  "You fought the me of last week. I am not him anymore.",
+];
+
+// Demo community aggregate — the raw shape of the meta/global document the
+// game's uploader maintains via Firestore increment fieldTransforms.
+// Mean profile dim = profileSum[dim] / profileSamples.
+export const DEMO_GLOBAL = {
+  totalFights: 12847,
+  bossWins: 7999,
+  fighters: 1283,
+  profileSamples: 12847,
+  profileSum: {
+    aggression: 7837,
+    dodgeTendency: 6167,
+    blockTendency: 5010,
+    openerAggression: 7066,
+    pressureResponse: 6038,
+    kitingScore: 5396,
+    comboCompletionRate: 6552,
+    positionalVariance: 6295,
+  },
+};

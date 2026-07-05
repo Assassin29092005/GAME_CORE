@@ -45,6 +45,9 @@ export default function Layout() {
           <NavLink to="/dashboard" className={({ isActive }) => (isActive ? "active" : "")}>
             Dossier
           </NavLink>
+          <NavLink to="/world" className={({ isActive }) => (isActive ? "active" : "")}>
+            World
+          </NavLink>
           <NavLink to="/download" className={({ isActive }) => (isActive ? "active" : "")}>
             Deployment
           </NavLink>

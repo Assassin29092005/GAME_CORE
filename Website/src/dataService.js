@@ -8,7 +8,7 @@ import {
   query,
 } from "firebase/firestore";
 import { db } from "./firebase.js";
-import { DEMO_FIGHTS, DEMO_PROFILE } from "./demoData.js";
+import { DEMO_FIGHTS, DEMO_GLOBAL, DEMO_PROFILE } from "./demoData.js";
 
 // ── Firestore schema (the contract the game writes — see Website/README.md) ──
 // users/{uid}/profile/current   → { aggression, dodgeTendency, blockTendency,
@@ -16,8 +16,23 @@ import { DEMO_FIGHTS, DEMO_PROFILE } from "./demoData.js";
 //                                   comboCompletionRate, positionalVariance, updatedAt }
 // users/{uid}/fights/{autoId}   → { startedAt, durationSeconds, outcome: "win"|"loss",
 //                                   encounterType: "npc"|"boss", bossHpAtEnd, heroHpAtEnd,
-//                                   emotion: { frustration, flow, boredom } }
+//                                   emotion: { frustration, flow, boredom },
+//                                   taunts: string[]  (optional — boss lines spoken mid-fight) }
+// meta/global                   → { totalFights, bossWins, fighters, profileSamples,
+//                                   profileSum: { ...8 profile dims summed } }
+//                                 maintained by the uploader via increment fieldTransforms.
 // `outcome` is from the PLAYER's perspective ("win" = player won).
+
+export const PROFILE_KEYS = [
+  "aggression",
+  "dodgeTendency",
+  "blockTendency",
+  "openerAggression",
+  "pressureResponse",
+  "kitingScore",
+  "comboCompletionRate",
+  "positionalVariance",
+];
 
 const toMillis = (v) => {
   if (v == null) return 0;
@@ -55,8 +70,73 @@ export async function fetchFights(uid, demo) {
         flow: f.emotion?.flow ?? 0,
         boredom: f.emotion?.boredom ?? 0,
       },
+      // Optional field — older fights (pre-taunt schema) simply won't have it.
+      taunts: Array.isArray(f.taunts)
+        ? f.taunts.filter((t) => typeof t === "string" && t.trim().length)
+        : [],
     };
   });
+}
+
+// ── Community aggregate (meta/global) ───────────────────────────────────────
+
+const clamp01 = (v) => Math.min(1, Math.max(0, v));
+const asNum = (v) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+
+// Normalizes whatever shape meta/global carries into
+// { totalFights, bossWins, fighters, bossWinRate, profileMean|null }.
+// Defensive on purpose: the doc is written incrementally by the game uploader
+// and may be partial (or absent) on a young deployment.
+function normalizeGlobal(g) {
+  if (!g || typeof g !== "object") return null;
+
+  const totalFights = Math.max(0, Math.round(asNum(g.totalFights)));
+  const bossWins = Math.min(Math.max(0, Math.round(asNum(g.bossWins))), totalFights);
+  const fighters = Math.max(0, Math.round(asNum(g.fighters)));
+  const samples = Math.max(0, Math.round(asNum(g.profileSamples))) || totalFights;
+
+  let profileMean = null;
+  if (g.profileMean && typeof g.profileMean === "object") {
+    // Direct means, if a future writer ever stores them precomputed.
+    profileMean = {};
+    for (const k of PROFILE_KEYS) profileMean[k] = clamp01(asNum(g.profileMean[k]));
+  } else if (g.profileSum && typeof g.profileSum === "object" && samples > 0) {
+    // Canonical path: running sums / sample count.
+    profileMean = {};
+    for (const k of PROFILE_KEYS) profileMean[k] = clamp01(asNum(g.profileSum[k]) / samples);
+  }
+
+  const bossWinRate =
+    typeof g.bossWinRate === "number" && Number.isFinite(g.bossWinRate)
+      ? clamp01(g.bossWinRate)
+      : totalFights > 0
+        ? bossWins / totalFights
+        : 0;
+
+  return { totalFights, bossWins, fighters, bossWinRate, profileMean };
+}
+
+export async function fetchGlobalStats(demo) {
+  if (demo || !db) return normalizeGlobal(DEMO_GLOBAL);
+  try {
+    const snap = await getDoc(doc(db, "meta", "global"));
+    return snap.exists() ? normalizeGlobal(snap.data()) : null;
+  } catch {
+    // Rules may not be deployed yet, or the doc may not exist — the World
+    // page renders its empty state rather than crashing.
+    return null;
+  }
+}
+
+// Community difficulty scalar — MUST mirror
+// UCommunityDifficultySubsystem::GetGlobalDifficultyScalar() game-side (see
+// Website/README.md): clamp01((mean(dodgeTendency) + mean(comboCompletionRate)) / 2).
+// 0.5 reads as a world of brand-new players; a missing mean falls back to it.
+export function communityDifficulty(profileMean) {
+  if (!profileMean || typeof profileMean !== "object") return 0.5;
+  return clamp01(
+    (asNum(profileMean.dodgeTendency) + asNum(profileMean.comboCompletionRate)) / 2
+  );
 }
 
 export function computeStats(fights) {

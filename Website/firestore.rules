@@ -1,10 +1,80 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // ── Per-player subtree ──────────────────────────────────────────────
     // Each player can read and write ONLY their own subtree.
     // The game client writes with the player's own auth token, so this is enough.
     match /users/{uid}/{document=**} {
       allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // ── Community aggregate: meta/global ────────────────────────────────
+    // One shared document. The game's uploader bumps it with Firestore REST
+    // `commit` fieldTransforms (increment) — no Cloud Functions on the free
+    // tier, so clients write it directly and these rules keep them honest:
+    //   * readable by any signed-in user (the World page),
+    //   * writable only in the exact schema shape, and
+    //   * every counter/sum must grow monotonically (increments only —
+    //     transforms are applied BEFORE rules run, so request.resource.data
+    //     is the post-increment value and a decrement/reset fails the check).
+    match /meta/global {
+
+      function d() { return request.resource.data; }
+
+      // Exact key set + non-negative numbers. Profile dims are 0–1 per
+      // sample, so each running sum can never exceed the sample count —
+      // enforced as a cheap sanity bound.
+      // bossWins/fighters use get(..., 0) rather than direct access: on the
+      // CREATE path a doc written by an older client may omit them (the
+      // uploader used to skip bossWins on player wins), and `d().bossWins`
+      // on a missing key ERRORS — which reads as a deny and deadlocks that
+      // client's flush queue. Defaulting to 0 keeps the shape check total.
+      function globalShapeOk() {
+        return d().keys().hasOnly(
+            ['totalFights', 'bossWins', 'fighters', 'profileSamples', 'profileSum'])
+          && d().totalFights is number && d().totalFights >= 0
+          && d().get('bossWins', 0) is number && d().get('bossWins', 0) >= 0
+          && d().get('bossWins', 0) <= d().totalFights
+          && d().get('fighters', 0) is number && d().get('fighters', 0) >= 0
+          && d().profileSamples is number && d().profileSamples >= 0
+          && d().profileSum is map
+          && d().profileSum.keys().hasOnly(
+            ['aggression', 'dodgeTendency', 'blockTendency', 'openerAggression',
+             'pressureResponse', 'kitingScore', 'comboCompletionRate',
+             'positionalVariance'])
+          && dimOk('aggression') && dimOk('dodgeTendency')
+          && dimOk('blockTendency') && dimOk('openerAggression')
+          && dimOk('pressureResponse') && dimOk('kitingScore')
+          && dimOk('comboCompletionRate') && dimOk('positionalVariance');
+      }
+
+      function dimOk(k) {
+        return d().profileSum.get(k, 0) is number
+          && d().profileSum.get(k, 0) >= 0
+          && d().profileSum.get(k, 0) <= d().profileSamples;
+      }
+
+      // Monotonic growth: nothing may shrink relative to the stored doc.
+      function grewMonotonically() {
+        return d().totalFights >= resource.data.get('totalFights', 0)
+          && d().get('bossWins', 0) >= resource.data.get('bossWins', 0)
+          && d().get('fighters', 0) >= resource.data.get('fighters', 0)
+          && d().profileSamples >= resource.data.get('profileSamples', 0)
+          && dimGrew('aggression') && dimGrew('dodgeTendency')
+          && dimGrew('blockTendency') && dimGrew('openerAggression')
+          && dimGrew('pressureResponse') && dimGrew('kitingScore')
+          && dimGrew('comboCompletionRate') && dimGrew('positionalVariance');
+      }
+
+      function dimGrew(k) {
+        return d().profileSum.get(k, 0)
+          >= resource.data.get('profileSum', {}).get(k, 0);
+      }
+
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && globalShapeOk();
+      allow update: if request.auth != null && globalShapeOk() && grewMonotonically();
+      allow delete: if false;
     }
   }
 }

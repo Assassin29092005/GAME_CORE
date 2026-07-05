@@ -6,6 +6,7 @@ import Panel from "../components/Panel.jsx";
 import StatCards from "../components/StatCards.jsx";
 import ProfileRadar from "../components/ProfileRadar.jsx";
 import EmotionTimeline from "../components/EmotionTimeline.jsx";
+import TauntPanel from "../components/TauntPanel.jsx";
 import FightHistory from "../components/FightHistory.jsx";
 
 const fmtDate = (d) =>
@@ -130,10 +131,19 @@ export default function Dashboard() {
           </Panel>
         </div>
 
-        <div className="col-log reveal d6">
+        <div className="col-taunts reveal d6">
+          <Panel
+            title="What the boss says about you"
+            tag="§ 04 · Spoken mid-fight, filed verbatim"
+          >
+            <TauntPanel fights={fights} />
+          </Panel>
+        </div>
+
+        <div className="col-log reveal d7">
           <Panel
             title="Engagement log"
-            tag={`§ 04 · ${fights.length} records on file`}
+            tag={`§ 05 · ${fights.length} records on file`}
           >
             <FightHistory fights={fights} />
           </Panel>
