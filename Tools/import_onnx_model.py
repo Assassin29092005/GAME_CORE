@@ -37,9 +37,12 @@ import unreal
 
 TAG = "[NNEImport]"
 
-SOURCE_ONNX = "D:/GAME_CORE 5.8/SourceArt/Models/boss_untrained.onnx"
+# Overridable via env (loop/pipeline reuse: set NNE_ONNX_SRC / NNE_ASSET_NAME
+# before the headless run to import any brain, e.g. per-persona archetypes).
+SOURCE_ONNX = os.environ.get(
+    "NNE_ONNX_SRC", "D:/GAME_CORE 5.8/SourceArt/Models/boss_untrained.onnx")
 DEST_DIR = "/Game/Arena/Models"
-ASSET_NAME = "NNM_BossUntrained"
+ASSET_NAME = os.environ.get("NNE_ASSET_NAME", "NNM_BossUntrained")
 ASSET_PATH = "%s/%s" % (DEST_DIR, ASSET_NAME)
 UASSET_DISK_PATH = "D:/GAME_CORE 5.8/Content/Arena/Models/%s.uasset" % ASSET_NAME
 

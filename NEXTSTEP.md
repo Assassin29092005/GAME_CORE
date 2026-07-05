@@ -53,6 +53,13 @@ powershell -ExecutionPolicy Bypass -File Tools\run_training.ps1 -Persona rusher 
 
 ## PART 3 — PROMOTE THE FIRST REAL BRAIN (after 1+ overnight runs)
 
+> **2026-07-05 21:45 (loop iter 1): rusher PROMOTED** — `boss_rusher.onnx` exported from
+> tonight's 41k-step run, imported as `NNM_BossRusher`, wired as the default model, and
+> verified in-world: `NNEBossPolicy: ready — model 'NNM_BossRusher' at 15 Hz`. Remaining
+> personas follow this same flow (import script now takes NNE_ONNX_SRC/NNE_ASSET_NAME env).
+> Small C++ TODO for the next build batch: `boss.NNESelfTest`'s pre-world fallback should
+> read GameFeelSettings.NNEBossModelData instead of its hardcoded untrained path.
+
 1. `cd Python` → export the best checkpoint (mirror `make_test_onnx.py`'s export call
    against `checkpoints/<best>.zip`) → `SourceArt/Models/boss_rusher.onnx`
 2. Point `Tools/import_onnx_model.py`'s constants at it → run headlessly:
