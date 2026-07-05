@@ -60,11 +60,22 @@ powershell -ExecutionPolicy Bypass -File Tools\run_training.ps1 -Persona rusher 
 > **02:05 (iter 3): turtle 110k promoted AND made the DEFAULT brain** — eval_archetypes.py
 > (new, runnable anytime) scored turtle 40-0 vs the scripted duel (balanced 22/50/28
 > attack/block/retreat kit); rusher (41k) is a dodge-only evasion specialist (needs more
-> steps). Kiter training since 01:45. QUEUED FOR NEXT TRAINING GAP: Build.bat the
-> code-only archetype-bank batch (+ apply mean-centered cosine per eval verifier),
-> import NNM_BossKiter, re-measure centroids from replays.
-> Small C++ TODO for the next build batch: `boss.NNESelfTest`'s pre-world fallback should
-> read GameFeelSettings.NNEBossModelData instead of its hardcoded untrained path.
+> steps).
+> **2026-07-06 (archetype-bank batch): DONE + built green + adversarially reviewed.**
+> Settings-driven bank (`+NNEArchetypeBank` ini rows) compiled in; review fixes applied:
+> mean-centered cosine (0.5-neutral centering — raw cosine saturated on all-positive
+> profiles), duplicate-persona row guard, centroids filtered to bank-backed personas.
+> **MAJOR review catch:** the bank was dead code in shipped play — nothing ever called
+> `LoadMemory`/`RecordEncounterEnd` outside the Python bridge, so TotalEncounters was
+> always 0 and the cosine match never ran. Fixed: `GameFeelSubsystem` now owns the memory
+> lifecycle (LoadMemory with Firebase-UID-else-guest BEFORE NNE injection; RecordEncounterEnd
+> + SaveMemory on round end, debounced; skipped under -rlbridge/live client). Centroids
+> re-measured from replays (`Python/measure_centroids.py`, new) and pasted into the ini.
+> `boss.NNESelfTest` pre-world fallback now reads GameFeelSettings.NNEBossModelData (old
+> TODO cleared). **NNM_BossKiter imported but STAGED (ini row commented out):** the 6k-step
+> kiter checkpoint evals dodge-only (94% dodge, 0W/0L/40D) — below turtle's promotion bar.
+> NEXT TRAINING GAP: full overnight kiter run, re-eval, re-measure (4 eps is noise), then
+> uncomment the row.
 
 1. `cd Python` → export the best checkpoint (mirror `make_test_onnx.py`'s export call
    against `checkpoints/<best>.zip`) → `SourceArt/Models/boss_rusher.onnx`

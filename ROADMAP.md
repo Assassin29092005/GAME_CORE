@@ -270,6 +270,18 @@ grayscale readability test, then optional decals/foliage/Niagara passes per visu
 **Done when:** a `-game` launch with no Python process gives a competent,
 profile-respecting boss fight.
 
+**Status (2026-07-06): archetype selection is now live end-to-end in the shipped path.**
+Settings-driven bank (`+NNEArchetypeBank` rows in DefaultGame.ini: persona + ONNX model +
+measured 8-dim centroid), mean-centered-cosine selection, and — the adversarial-review
+catch — the missing memory lifecycle: `GameFeelSubsystem` loads `PlayerMemoryComponent`
+(Firebase UID / guest) before NNE injection and records+saves every round end, so the
+stored profile the bank matches against actually exists outside training. Brains:
+turtle 110k (default), rusher 41k (bank), kiter 6k imported but staged-only (evals
+dodge-only — needs a real overnight run). Tooling: `Python/measure_centroids.py` (new),
+`eval_archetypes.py` promotion gate, env-parameterized `Tools/import_onnx_model.py`.
+Remaining for done-criteria: the human PIE/`-game` fight check (NEXTSTEP Part 0 #6) and
+per-persona brains worth shipping (kiter/counter/chaotic overnight runs).
+
 ## M6 — Accounts & local-first sync *(≈1 week)*
 
 **Goal:** login in-game, telemetry uploads, dashboard fills itself.
