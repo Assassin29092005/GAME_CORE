@@ -94,7 +94,11 @@ powershell -ExecutionPolicy Bypass -File Tools\run_training.ps1 -Persona rusher 
   Everything lives in Project Settings → Game → Game Feel + the data assets.
 - **M8 packaging**: Project Settings → Packaging → Shipping; maps list (BossArena +
   future menu); Platforms → Windows → Package. Test on a UE-less machine per ROADMAP M8.
-  A headless `BuildCookRun` smoke early will surface cook errors — ask Claude.
+  **Cook smoke PASSED (2026-07-06):** headless `BuildCookRun -cook` — 3872/3872 packages,
+  zero errors, BUILD SUCCESSFUL (~7 min; UE 5.8 cooks into the Zen store, so Saved/Cooked
+  staying near-empty is normal — don't chase that). Still to verify at real packaging:
+  NNM_* assets present in the staged pak (the DirectoriesToAlwaysCook insurance), maps
+  list, Shipping config.
 - Upgrades queued behind taste: better whoosh/grunt audio (Sonniss/Freesound), grass MIC
   tints (grass/fern param names failed — stock green for now), MetaHuman skins (post-M2).
 
