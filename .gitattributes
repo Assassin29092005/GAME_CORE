@@ -7,3 +7,7 @@ SourceArt/**/*.fbx filter=lfs diff=lfs merge=lfs -text
 SourceArt/**/*.blend filter=lfs diff=lfs merge=lfs -text
 SourceArt/**/*.jpg filter=lfs diff=lfs merge=lfs -text
 SourceArt/**/*.png filter=lfs diff=lfs merge=lfs -text
+SourceArt/**/*.wav filter=lfs diff=lfs merge=lfs -text
+SourceArt/**/*.ogg filter=lfs diff=lfs merge=lfs -text
+SourceArt/**/*.zip filter=lfs diff=lfs merge=lfs -text
+SourceArt/**/*.onnx filter=lfs diff=lfs merge=lfs -text

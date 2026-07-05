@@ -50,3 +50,29 @@ Automation_GAME_CORE.sln
 # Blender auto-backups
 *.blend1
 *.blend2
+
+# Vendored Fab/marketplace packs — re-downloadable from the Fab library (NEXTSTEP.md Part 3).
+# Committing 23GB of redistributable content through LFS doubles it into .git for nothing.
+# Fresh clones: re-add the packs via the launcher (same folder names) and everything relinks.
+Content/KiteDemo/
+Content/ParagonProps/
+Content/MedCastle/
+Content/Medieval_MWP/
+Content/ForestOfSpikes/
+Content/Fighter_Animations/
+Content/RamsterZ_FreeAnims_Volume1/
+Content/FreeAnimationsPack/
+Content/SlashTrail_SoftTofu/
+Content/Sword/
+Content/Weapons_Free/
+Content/Stone_Golem/*
+!Content/Stone_Golem/Retargeted/
+Content/Lighting/
+Content/SampleMap/
+Content/Levels/
+Content/MetaHumans/
+# Template leftovers
+Content/__ExternalActors__/ThirdPerson/
+Content/__ExternalObjects__/ThirdPerson/
+Content/__ExternalActors__/VehicleTemplate/
+Content/__ExternalObjects__/VehicleTemplate/
