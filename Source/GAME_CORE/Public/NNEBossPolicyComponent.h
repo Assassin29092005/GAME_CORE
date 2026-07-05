@@ -58,6 +58,14 @@ public:
 	 *  zero norm only happens on authoring mistakes — logged, not crashed. */
 	UFUNCTION(BlueprintCallable, Category = "Archetype")
 	FName SelectArchetype(const TArray<float>& PlayerProfile8) const;
+
+	/** Table-less core of SelectArchetype, shared with the GameFeelSettings-fed
+	 *  centroid path (UNNEBossPolicyComponent builds FArchetypeProfileEntry rows
+	 *  from FNNEArchetypeBankEntry — no asset needed). OutBestSimilarity receives
+	 *  the winning cosine in [-1,1] (untouched when the return is NAME_None).
+	 *  Plain static, not a UFUNCTION — BP callers go through SelectArchetype. */
+	static FName SelectFromEntries(const TArray<FArchetypeProfileEntry>& Entries,
+		const TArray<float>& PlayerProfile8, float& OutBestSimilarity);
 };
 
 /**
@@ -82,9 +90,12 @@ public:
  *
  * Install: auto-injected onto the boss by UGameFeelSubsystem when
  * UGameFeelSettings::bEnableNNEBoss is set (no BP wiring), or add it in BP.
- * Model wiring: ModelData directly, a per-persona ArchetypeBank +
- * ArchetypeProfiles table, or UGameFeelSettings::NNEBossModelData as the
- * settings-driven default for the injected path.
+ * Model wiring (precedence): a per-persona ArchetypeBank + centroid table
+ * (BP-authored, or auto-populated from UGameFeelSettings::NNEArchetypeBank rows
+ * when the component's own bank is empty — the normal injected path) matched by
+ * cosine similarity against PlayerMemoryComponent's stored profile; then
+ * ModelData directly; then UGameFeelSettings::NNEBossModelData as the
+ * settings-driven default; then the first valid bank entry.
  *
  * Headless verification: console `boss.NNESelfTest [/Game/Path/To/ModelData]`
  * (see the FAutoConsoleCommand in the .cpp) — runs one zeros-obs inference and
@@ -114,12 +125,18 @@ public:
 	bool bEnabled = true;
 
 	/** Per-persona exported policies (boss_rusher.onnx, ...). Keys must match
-	 *  ArchetypeProfiles persona names. Empty bank -> ModelData fallback. */
+	 *  ArchetypeProfiles persona names. If left EMPTY (always true for the
+	 *  GameFeelSubsystem-injected component — NewObject gets no BP property
+	 *  pass), it is populated at init from UGameFeelSettings::NNEArchetypeBank
+	 *  rows (soft-path loads; broken rows warn and are skipped). A BP-authored
+	 *  bank suppresses the settings rows entirely. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "NNEBoss|Archetypes")
 	TMap<FName, TObjectPtr<UNNEModelData>> ArchetypeBank;
 
 	/** Cosine-similarity table used at BeginPlay to pick from ArchetypeBank based
-	 *  on PlayerMemoryComponent's stored (decayed) profile. */
+	 *  on PlayerMemoryComponent's stored (decayed) profile. Optional: when null,
+	 *  the centroids carried by the UGameFeelSettings::NNEArchetypeBank rows are
+	 *  used instead (the normal path for the auto-injected component). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "NNEBoss|Archetypes")
 	TObjectPtr<UArchetypeProfilesAsset> ArchetypeProfiles;
 
@@ -161,10 +178,17 @@ protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
-	/** Archetype bank (via PlayerMemoryComponent profile + ArchetypeProfiles) ->
-	 *  ModelData -> GameFeelSettings default -> first bank entry -> nullptr.
-	 *  Sets SelectedArchetype as a side effect. */
+	/** Archetype bank (via PlayerMemoryComponent profile + ArchetypeProfiles or
+	 *  the settings-fed centroids) -> ModelData -> GameFeelSettings default ->
+	 *  first bank entry -> nullptr. Sets SelectedArchetype + SelectionSummary
+	 *  as side effects and logs the archetype decision loudly. */
 	UNNEModelData* ResolveModelData();
+
+	/** When ArchetypeBank is empty, fill it (and SettingsCentroids) from
+	 *  UGameFeelSettings::NNEArchetypeBank: TryLoad each soft path, warn+skip
+	 *  broken rows / non-8-dim centroids. Idempotent — a non-empty bank
+	 *  (BP-authored or already populated) is left untouched. */
+	void PopulateBankFromSettings();
 
 	/** Timer body: obs -> RunSync -> masked argmax -> ExecuteAction. */
 	void DecisionTick();
@@ -180,6 +204,16 @@ private:
 
 	FTimerHandle DecisionTimerHandle;
 	FName SelectedArchetype = NAME_None;
+
+	// Centroid rows lifted from UGameFeelSettings::NNEArchetypeBank by
+	// PopulateBankFromSettings (only rows whose Centroid.Num() == 8). Used when
+	// no ArchetypeProfiles asset is wired. Plain member — the FNames/floats need
+	// no GC; the loaded models are rooted by the ArchetypeBank UPROPERTY.
+	TArray<FArchetypeProfileEntry> SettingsCentroids;
+
+	// Human-readable record of the ResolveModelData decision, e.g.
+	// "archetype: turtle (cos=0.87)" — surfaced in the ready log.
+	FString SelectionSummary;
 
 	// Peer components, cached in BeginPlay (FindComponentByClass — no hard refs,
 	// project convention).

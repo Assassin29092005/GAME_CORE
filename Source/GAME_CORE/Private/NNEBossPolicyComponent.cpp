@@ -30,9 +30,22 @@ static const TCHAR* GNNEBossSelfTestDefaultAsset = TEXT("/Game/Arena/Models/NNM_
 
 FName UArchetypeProfilesAsset::SelectArchetype(const TArray<float>& PlayerProfile8) const
 {
-	// Cosine similarity over the 8 profile dims. Profiles live in [0,1] so all
-	// norms are positive in practice; zero-norm entries are authoring mistakes
-	// and are skipped with a warning rather than dividing by zero.
+	float UnusedSimilarity = -2.0f;
+	return SelectFromEntries(Archetypes, PlayerProfile8, UnusedSimilarity);
+}
+
+FName UArchetypeProfilesAsset::SelectFromEntries(const TArray<FArchetypeProfileEntry>& Entries,
+	const TArray<float>& PlayerProfile8, float& OutBestSimilarity)
+{
+	// Mean-centered cosine over the 8 profile dims: both vectors are centered at
+	// the 0.5 neutral profile before the dot product. Raw cosine on [0,1]
+	// profiles saturates near 1 (every vector shares a large positive offset)
+	// and barely discriminates; after centering, similarity measures the
+	// DIRECTION of deviation from neutral — which is the archetype signal.
+	// Zero-norm after centering = exactly-neutral profile = no signal.
+	// Python/measure_centroids.py mirrors this math (keep them in sync).
+	constexpr float Neutral = 0.5f;
+
 	if (PlayerProfile8.Num() != 8)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("ArchetypeProfiles: SelectArchetype expects 8 dims, got %d"), PlayerProfile8.Num());
@@ -40,17 +53,17 @@ FName UArchetypeProfilesAsset::SelectArchetype(const TArray<float>& PlayerProfil
 	}
 
 	float PlayerNormSq = 0.0f;
-	for (const float V : PlayerProfile8) { PlayerNormSq += V * V; }
+	for (const float V : PlayerProfile8) { PlayerNormSq += (V - Neutral) * (V - Neutral); }
 	if (PlayerNormSq <= UE_KINDA_SMALL_NUMBER)
 	{
-		return NAME_None; // all-zero player profile carries no signal
+		return NAME_None; // all-neutral player profile carries no signal
 	}
 	const float PlayerNorm = FMath::Sqrt(PlayerNormSq);
 
 	FName BestName = NAME_None;
 	float BestSimilarity = -2.0f; // cosine is in [-1,1]
 
-	for (const FArchetypeProfileEntry& Entry : Archetypes)
+	for (const FArchetypeProfileEntry& Entry : Entries)
 	{
 		if (Entry.Profile.Num() != 8)
 		{
@@ -63,12 +76,13 @@ FName UArchetypeProfilesAsset::SelectArchetype(const TArray<float>& PlayerProfil
 		float EntryNormSq = 0.0f;
 		for (int32 i = 0; i < 8; ++i)
 		{
-			Dot += Entry.Profile[i] * PlayerProfile8[i];
-			EntryNormSq += Entry.Profile[i] * Entry.Profile[i];
+			const float EntryCentered = Entry.Profile[i] - Neutral;
+			Dot += EntryCentered * (PlayerProfile8[i] - Neutral);
+			EntryNormSq += EntryCentered * EntryCentered;
 		}
 		if (EntryNormSq <= UE_KINDA_SMALL_NUMBER)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("ArchetypeProfiles: entry '%s' is zero-norm — skipped."),
+			UE_LOG(LogTemp, Warning, TEXT("ArchetypeProfiles: entry '%s' is all-neutral (zero norm after centering) — skipped."),
 				*Entry.Persona.ToString());
 			continue;
 		}
@@ -81,6 +95,10 @@ FName UArchetypeProfilesAsset::SelectArchetype(const TArray<float>& PlayerProfil
 		}
 	}
 
+	if (!BestName.IsNone())
+	{
+		OutBestSimilarity = BestSimilarity;
+	}
 	return BestName;
 }
 
@@ -227,10 +245,8 @@ void UNNEBossPolicyComponent::BeginPlay()
 	InputBuffer.SetNumZeroed(ObsDim);
 	OutputBuffer.SetNumZeroed(NumActions);
 
-	UE_LOG(LogTemp, Log, TEXT("NNEBossPolicy: ready — model '%s' (archetype: %s) at %.0f Hz on %s."),
-		*Data->GetName(),
-		SelectedArchetype.IsNone() ? TEXT("<fallback>") : *SelectedArchetype.ToString(),
-		DecisionHz, GNNEBossRuntimeName);
+	UE_LOG(LogTemp, Display, TEXT("NNEBossPolicy: ready — model '%s' [%s] at %.0f Hz on %s."),
+		*Data->GetName(), *SelectionSummary, DecisionHz, GNNEBossRuntimeName);
 
 	GetWorld()->GetTimerManager().SetTimer(
 		DecisionTimerHandle,
@@ -249,15 +265,128 @@ void UNNEBossPolicyComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	Super::EndPlay(EndPlayReason);
 }
 
+void UNNEBossPolicyComponent::PopulateBankFromSettings()
+{
+	// A non-empty bank means either a BP author wired it (their table wins) or
+	// we already populated on an earlier ResolveModelData call (RunSelfTest can
+	// re-enter) — both cases: leave it alone.
+	if (ArchetypeBank.Num() > 0)
+	{
+		return;
+	}
+
+	const UGameFeelSettings* Settings = GetDefault<UGameFeelSettings>();
+	for (const FNNEArchetypeBankEntry& Row : Settings->NNEArchetypeBank)
+	{
+		if (Row.Persona.IsNone())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("NNEBossPolicy: settings NNEArchetypeBank row with empty Persona — skipped."));
+			continue;
+		}
+		if (!Row.ModelData.IsValid())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("NNEBossPolicy: settings archetype '%s' has no ModelData path — skipped."),
+				*Row.Persona.ToString());
+			continue;
+		}
+		// Duplicate persona = authoring mistake with silent mis-pairing potential:
+		// TMap::Add would REPLACE the model while the centroid array APPENDS, so
+		// the cosine winner's centroid and the served model could come from
+		// different rows. First row wins, later duplicates are skipped loudly.
+		if (ArchetypeBank.Contains(Row.Persona))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("NNEBossPolicy: duplicate settings archetype row for '%s' — skipped (first row wins)."),
+				*Row.Persona.ToString());
+			continue;
+		}
+
+		UNNEModelData* Loaded = Cast<UNNEModelData>(Row.ModelData.TryLoad());
+		if (!Loaded)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("NNEBossPolicy: settings archetype '%s' model '%s' failed to load as UNNEModelData — skipped."),
+				*Row.Persona.ToString(), *Row.ModelData.ToString());
+			continue;
+		}
+
+		// Rooted via the ArchetypeBank UPROPERTY for the component's lifetime.
+		ArchetypeBank.Add(Row.Persona, Loaded);
+
+		if (Row.Centroid.Num() == 8)
+		{
+			FArchetypeProfileEntry Entry;
+			Entry.Persona = Row.Persona;
+			Entry.Profile = Row.Centroid;
+			SettingsCentroids.Add(MoveTemp(Entry));
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("NNEBossPolicy: settings archetype '%s' centroid has %d dims (want 8) — model kept, excluded from cosine selection."),
+				*Row.Persona.ToString(), Row.Centroid.Num());
+		}
+	}
+
+	if (ArchetypeBank.Num() > 0)
+	{
+		UE_LOG(LogTemp, Log, TEXT("NNEBossPolicy: archetype bank populated from GameFeelSettings — %d model(s), %d centroid(s)."),
+			ArchetypeBank.Num(), SettingsCentroids.Num());
+	}
+}
+
 UNNEModelData* UNNEBossPolicyComponent::ResolveModelData()
 {
 	SelectedArchetype = NAME_None;
+	SelectionSummary = TEXT("<unresolved>");
+
+	// 0) Settings-fed bank: the auto-injected component (GameFeelSubsystem
+	//    NewObjects us — no BP property pass) gets its per-persona models and
+	//    centroids from UGameFeelSettings::NNEArchetypeBank.
+	PopulateBankFromSettings();
+
+	// Centroid source: an explicit ArchetypeProfiles asset outranks the
+	// settings-carried centroids (same precedence rule as ModelData vs settings).
+	// Either source is FILTERED to personas that actually have a bank model:
+	// a bank-less persona winning the cosine match would dead-end selection at
+	// the global default while a second-best-but-available archetype goes
+	// unused (easy to author with a 5-persona profiles asset over a 2-row bank).
+	TArray<FArchetypeProfileEntry> SelectableCentroids;
+	const TCHAR* CentroidSource = TEXT("");
+	{
+		const TArray<FArchetypeProfileEntry>* RawEntries = nullptr;
+		if (ArchetypeProfiles && ArchetypeProfiles->Archetypes.Num() > 0)
+		{
+			RawEntries = &ArchetypeProfiles->Archetypes;
+			CentroidSource = TEXT("ArchetypeProfiles asset");
+		}
+		else if (SettingsCentroids.Num() > 0)
+		{
+			// Bank-backed by construction (PopulateBankFromSettings only keeps
+			// centroids whose model loaded) — the filter is a no-op here.
+			RawEntries = &SettingsCentroids;
+			CentroidSource = TEXT("GameFeelSettings centroids");
+		}
+		if (RawEntries)
+		{
+			for (const FArchetypeProfileEntry& Entry : *RawEntries)
+			{
+				if (ArchetypeBank.Contains(Entry.Persona))
+				{
+					SelectableCentroids.Add(Entry);
+				}
+				else
+				{
+					UE_LOG(LogTemp, Warning, TEXT("NNEBossPolicy: centroid '%s' (%s) has no model in ArchetypeBank — excluded from selection."),
+						*Entry.Persona.ToString(), CentroidSource);
+				}
+			}
+		}
+	}
 
 	// 1) Archetype bank: pick the persona nearest to the player's STORED profile.
 	//    PlayerMemoryComponent carries the cross-encounter decayed profile in from
 	//    the patrol fights (M3), so a returning player meets a pre-adapted boss.
-	//    Zero encounters = no signal — skip selection rather than matching noise.
-	if (ArchetypeBank.Num() > 0 && ArchetypeProfiles)
+	//    Zero encounters = default profile = no signal — skip selection rather
+	//    than cosine-matching noise.
+	if (SelectableCentroids.Num() > 0)
 	{
 		if (AActor* Owner = GetOwner())
 		{
@@ -266,7 +395,8 @@ UNNEModelData* UNNEBossPolicyComponent::ResolveModelData()
 				if (Memory->GetTotalEncounters() > 0)
 				{
 					const TArray<float> StoredProfile = Memory->GetDecayedProfile().ToFloatArray();
-					const FName Best = ArchetypeProfiles->SelectArchetype(StoredProfile);
+					float BestCos = -2.0f;
+					const FName Best = UArchetypeProfilesAsset::SelectFromEntries(SelectableCentroids, StoredProfile, BestCos);
 					if (!Best.IsNone())
 					{
 						if (const TObjectPtr<UNNEModelData>* Found = ArchetypeBank.Find(Best))
@@ -274,14 +404,19 @@ UNNEModelData* UNNEBossPolicyComponent::ResolveModelData()
 							if (*Found)
 							{
 								SelectedArchetype = Best;
-								UE_LOG(LogTemp, Log, TEXT("NNEBossPolicy: archetype '%s' selected from stored profile (%d encounters)."),
-									*Best.ToString(), Memory->GetTotalEncounters());
+								SelectionSummary = FString::Printf(TEXT("archetype: %s (cos=%.2f)"), *Best.ToString(), BestCos);
+								UE_LOG(LogTemp, Display, TEXT("NNEBossPolicy: %s — matched stored player profile (%d encounters, centroids: %s, model '%s')."),
+									*SelectionSummary, Memory->GetTotalEncounters(), CentroidSource, *(*Found)->GetName());
 								return *Found;
 							}
 						}
-						UE_LOG(LogTemp, Warning, TEXT("NNEBossPolicy: archetype '%s' selected but missing from ArchetypeBank — falling back."),
-							*Best.ToString());
+						UE_LOG(LogTemp, Warning, TEXT("NNEBossPolicy: archetype '%s' won the cosine match (%.2f) but has no model in ArchetypeBank — falling back."),
+							*Best.ToString(), BestCos);
 					}
+				}
+				else
+				{
+					UE_LOG(LogTemp, Log, TEXT("NNEBossPolicy: player memory has 0 encounters (default profile) — skipping archetype match."));
 				}
 			}
 		}
@@ -290,17 +425,21 @@ UNNEModelData* UNNEBossPolicyComponent::ResolveModelData()
 	// 2) Explicit fallback model.
 	if (ModelData)
 	{
+		SelectionSummary = TEXT("default: explicit ModelData property");
+		UE_LOG(LogTemp, Display, TEXT("NNEBossPolicy: %s ('%s')."), *SelectionSummary, *ModelData->GetName());
 		return ModelData;
 	}
 
 	// 3) Settings-driven default — the wiring path for the auto-injected
-	//    component (GameFeelSubsystem NewObjects us, so no BP property pass).
+	//    component when no archetype matched.
 	const FSoftObjectPath& SettingsPath = GetDefault<UGameFeelSettings>()->NNEBossModelData;
 	if (SettingsPath.IsValid())
 	{
 		if (UNNEModelData* Loaded = Cast<UNNEModelData>(SettingsPath.TryLoad()))
 		{
 			ModelData = Loaded; // keep a strong ref for the model's lifetime
+			SelectionSummary = TEXT("default: GameFeelSettings NNEBossModelData");
+			UE_LOG(LogTemp, Display, TEXT("NNEBossPolicy: %s ('%s')."), *SelectionSummary, *Loaded->GetName());
 			return Loaded;
 		}
 		UE_LOG(LogTemp, Warning, TEXT("NNEBossPolicy: GameFeelSettings NNEBossModelData '%s' failed to load as UNNEModelData."),
@@ -313,6 +452,8 @@ UNNEModelData* UNNEBossPolicyComponent::ResolveModelData()
 		if (Pair.Value)
 		{
 			SelectedArchetype = Pair.Key;
+			SelectionSummary = FString::Printf(TEXT("archetype: %s (no profile match — first bank entry)"), *Pair.Key.ToString());
+			UE_LOG(LogTemp, Display, TEXT("NNEBossPolicy: %s."), *SelectionSummary);
 			return Pair.Value;
 		}
 	}
@@ -560,15 +701,21 @@ static void BossNNESelfTest(const TArray<FString>& Args)
 		return;
 	}
 
-	// No component anywhere (bare level / early ExecCmds) — fall back to the
-	// default imported test asset so the headless pipeline check still runs.
-	UE_LOG(LogTemp, Warning, TEXT("boss.NNESelfTest: no live UNNEBossPolicyComponent found — trying default asset %s"),
-		GNNEBossSelfTestDefaultAsset);
-	BossNNESelfTestStandalone(GNNEBossSelfTestDefaultAsset);
+	// No component anywhere (bare level / early ExecCmds) — standalone fallback.
+	// Prefer the shipped wiring point (GameFeelSettings::NNEBossModelData) so the
+	// self-test exercises the asset the injected boss will actually load; the
+	// hardcoded untrained-model path is last resort for a blank project.
+	const FSoftObjectPath& SettingsPath = GetDefault<UGameFeelSettings>()->NNEBossModelData;
+	const bool bFromSettings = SettingsPath.IsValid();
+	const FString AssetPath = bFromSettings ? SettingsPath.ToString() : FString(GNNEBossSelfTestDefaultAsset);
+	UE_LOG(LogTemp, Warning, TEXT("boss.NNESelfTest: no live UNNEBossPolicyComponent found — using %s: %s"),
+		bFromSettings ? TEXT("GameFeelSettings.NNEBossModelData") : TEXT("hardcoded untrained-model default (setting is empty)"),
+		*AssetPath);
+	BossNNESelfTestStandalone(AssetPath);
 }
 
 static FAutoConsoleCommand GBossNNESelfTestCmd(
 	TEXT("boss.NNESelfTest"),
 	TEXT("Run one NNE boss-policy inference on a zeros observation and log the 5 logits + chosen action. ")
-	TEXT("Optional arg: UNNEModelData asset path (default: live component, else /Game/Arena/Models/NNM_BossUntrained)."),
+	TEXT("Optional arg: UNNEModelData asset path (default: live component, else GameFeelSettings.NNEBossModelData, else /Game/Arena/Models/NNM_BossUntrained)."),
 	FConsoleCommandWithArgsDelegate::CreateStatic(&BossNNESelfTest));

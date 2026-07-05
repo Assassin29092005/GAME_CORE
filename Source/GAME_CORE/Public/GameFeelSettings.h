@@ -6,6 +6,51 @@
 #include "GameFeelSettings.generated.h"
 
 /**
+ * One row of the settings-driven NNE archetype bank (M5).
+ *
+ * Persona -> exported per-persona boss policy (UNNEModelData) + the 8-dim
+ * behavior centroid that persona represents. The centroid is the MEAN 8-dim
+ * FPlayerProfile the persona's policy trained against (measured from
+ * replays/<persona>/ — the AutoHero persona's own EMA profile). At boss init,
+ * UNNEBossPolicyComponent picks the row whose centroid has the highest COSINE
+ * SIMILARITY to the player's stored PlayerMemoryComponent profile, so a
+ * returning rushdown player meets the anti-rusher policy from the first swing.
+ *
+ * Serialized as +NNEArchetypeBank=(...) struct rows in Config/DefaultGame.ini —
+ * chosen over a TMap property because UE's config loader handles arrays of
+ * structs via the +Element syntax reliably, while TMap-from-DefaultConfig is a
+ * single-line ImportText path with fragile merge semantics.
+ */
+USTRUCT()
+struct GAME_CORE_API FNNEArchetypeBankEntry
+{
+	GENERATED_BODY()
+
+	/** Persona name. By convention matches an M1 AutoHero persona
+	 *  (rusher/turtle/kiter/counter/chaotic) and the persona keys used by
+	 *  Tools/run_training.ps1 for replays/<persona>/. */
+	UPROPERTY(EditAnywhere, Category = "Archetype")
+	FName Persona;
+
+	/** The persona's exported policy (Python/export_onnx.py ->
+	 *  Tools/import_onnx_model.py). Keep it under /Game/Arena/Models — that
+	 *  directory is force-cooked (DirectoriesToAlwaysCook) precisely because
+	 *  config-only soft paths are not cook dependencies. */
+	UPROPERTY(EditAnywhere, Category = "Archetype", meta = (AllowedClasses = "/Script/NNE.NNEModelData"))
+	FSoftObjectPath ModelData;
+
+	/** 8-dim centroid, EXACTLY 8 entries, FPlayerProfile::ToFloatArray() order:
+	 *  [AggressionScore, DodgeTendency, BlockTendency, OpenerAggression,
+	 *   PressureResponse, KitingScore, ComboCompletionRate, PositionalVariance],
+	 *  each in [0,1] (0.5 = neutral). Rows with Num() != 8 are excluded from
+	 *  cosine selection (warned at load); their model stays loadable as a
+	 *  last-resort bank entry. (TArray<float> because UHT cannot reflect raw
+	 *  C arrays — fixed size is enforced by convention + runtime check.) */
+	UPROPERTY(EditAnywhere, Category = "Archetype")
+	TArray<float> Centroid;
+};
+
+/**
  * CONTRACT #2 — all cross-cutting game-feel toggles/numbers live here.
  * Track C owns this file; tracks A and B may READ via GetDefault<UGameFeelSettings>()
  * but must not edit it.
@@ -52,6 +97,16 @@ public:
 	 *  dormant and the scripted fallback brain covers the boss. */
 	UPROPERTY(EditAnywhere, Config, Category = "Toggles", meta = (AllowedClasses = "/Script/NNE.NNEModelData"))
 	FSoftObjectPath NNEBossModelData;
+
+	/** M5 archetype bank rows (persona -> per-persona ONNX policy + 8-dim
+	 *  behavior centroid). Read by UNNEBossPolicyComponent when its own
+	 *  ArchetypeBank UPROPERTY is empty (the auto-injected path always is):
+	 *  models are soft-loaded into the bank and centroids feed the
+	 *  cosine-similarity match against PlayerMemoryComponent's stored profile.
+	 *  Empty, or no usable player profile -> NNEBossModelData default.
+	 *  See FNNEArchetypeBankEntry for the centroid contract. */
+	UPROPERTY(EditAnywhere, Config, Category = "Toggles|NNE", meta = (TitleProperty = "Persona"))
+	TArray<FNNEArchetypeBankEntry> NNEArchetypeBank;
 
 	/** Let UCombatCameraComponent push the guide.md 5.1 defaults onto the hero's
 	 *  SpringArm/Camera at BeginPlay (lag 9/10, max lag distance 75, substepping,
