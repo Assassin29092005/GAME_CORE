@@ -4,6 +4,7 @@
 #include "GameFramework/Character.h"
 #include "Kismet/GameplayStatics.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Sound/SoundBase.h"
 
 UHitFeedbackComponent::UHitFeedbackComponent()
 {
@@ -29,6 +30,7 @@ void UHitFeedbackComponent::TriggerHitFeedback(AActor* Attacker, float StopDurat
 	}
 
 	PlayCameraShake(ShakeScale);
+	PlayImpactSound(/*bHeavy*/ false);
 }
 
 void UHitFeedbackComponent::TriggerHeavyHitFeedback(AActor* Attacker)
@@ -45,6 +47,19 @@ void UHitFeedbackComponent::TriggerHeavyHitFeedback(AActor* Attacker)
 	}
 
 	PlayCameraShake(CameraShakeScale * 1.5f, /*bHeavy*/ true);
+	PlayImpactSound(/*bHeavy*/ true);
+}
+
+void UHitFeedbackComponent::PlayImpactSound(bool bHeavy)
+{
+	// Impact audio (guide.md 7.1.2): fires only from the confirmed-hit path, so
+	// whiffs stay silent. At-location (not 2D) so distance/panning read correctly.
+	USoundBase* Sound = bHeavy ? (HeavyImpactSound ? HeavyImpactSound.Get() : ImpactSound.Get()) : ImpactSound.Get();
+	AActor* Owner = GetOwner();
+	if (Sound && Owner)
+	{
+		UGameplayStatics::PlaySoundAtLocation(GetWorld(), Sound, Owner->GetActorLocation());
+	}
 }
 
 void UHitFeedbackComponent::ApplyHitStop(float Duration, float Dilation)

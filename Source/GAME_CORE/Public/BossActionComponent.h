@@ -33,6 +33,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnBossTelegraphCancelled);
 class URLBridgeComponent;
 class UHitReactionComponent;
 class UAnimInstance;
+class USoundBase;
 
 UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
 class GAME_CORE_API UBossActionComponent : public UActorComponent
@@ -139,6 +140,12 @@ public:
 	 *  attack montage has no "Windup" section to measure. Broadcast value = length / rate. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BossAction|Telegraph")
 	float FallbackWindupSectionLength = 0.4f;
+
+	/** Boss vocal/boom cue fired at wind-up start (guide.md 7.1 / 4.4). Played
+	 *  at-location always; ALSO played 2D when the boss is off screen so the audio
+	 *  telegraph survives the mix — the Phase 5.3.3 off-screen fairness rule. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BossAction|Telegraph")
+	TObjectPtr<USoundBase> TelegraphSound;
 
 	/** Fired in DoAttack right after the attack montage starts (bridge AND fallback-brain
 	 *  attacks — both route through DoAttack). Bind for telegraph rings / audio cues. */

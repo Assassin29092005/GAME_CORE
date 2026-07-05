@@ -1,0 +1,18 @@
+Placeholder combat audio shortlist (guide.md 7.1) — all CC0 from kenney.nl.
+Converted .ogg -> 16-bit PCM .wav (UE-safe import format); originals kept alongside.
+
+semantic name        source pack / file                                  notes
+whoosh_light.wav     rpg-audio / knifeSlice2.ogg          0.57s @48k    blade slice; closest thing to an air whoosh in these packs
+whoosh_heavy.wav     rpg-audio / knifeSlice.ogg           0.60s @48k    slightly bigger slice; still light for a greatsword — upgrade later
+impact_light_a.wav   impact-sounds / impactPunch_medium_000.ogg  0.43s  fleshy body thud, reads well
+impact_light_b.wav   impact-sounds / impactPunch_medium_001.ogg  0.40s  variant of the above (boss-side)
+impact_heavy_a.wav   impact-sounds / impactPunch_heavy_000.ogg   0.65s  deeper punch, good finisher weight
+impact_heavy_b.wav   impact-sounds / impactPunch_heavy_001.ogg   0.54s  variant (boss-side)
+block_thud.wav       impact-sounds / impactWood_heavy_000.ogg    0.31s  short dull shield-like thunk
+parry_ting.wav       impact-sounds / impactBell_heavy_001.ogg    1.74s  bright bell with a long tail — exactly the 7.1.4 reward sound
+telegraph_grunt.wav  impact-sounds / impactPlate_heavy_004.ogg   0.56s  LOW METALLIC BOOM, NOT a vocal grunt (no CC0 grunt in these packs)
+ui_confirm.wav       interface-sounds / confirmation_001.ogg     0.29s  clean two-note confirm
+
+Also downloaded (unused for 7.1): voiceover-pack-fighter — announcer lines
+("FIGHT!", "Round 1", "Flawless victory"), no combat grunts; possibly useful
+for round-flow UI later.

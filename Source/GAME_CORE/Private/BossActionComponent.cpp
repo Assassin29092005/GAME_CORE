@@ -3,6 +3,7 @@
 #include "GameFramework/Pawn.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "Sound/SoundBase.h"
 #include "HitReactionComponent.h"
 #include "CombatComponent.h"
 #include "RLBridgeComponent.h"
@@ -410,6 +411,18 @@ bool UBossActionComponent::DoAttack()
 		}
 		const float WindupSeconds = WindupSectionLength / FMath::Max(WindupRate, 0.01f);
 		OnBossTelegraph.Broadcast(bHeavyUnblockable, WindupSeconds);
+
+		// Audio telegraph (guide.md 7.1 / 5.3.3): at-location for spatial read,
+		// PLUS a 2D copy when off screen — an attack the player can't see must
+		// still be heard clearly, never buried by distance attenuation.
+		if (TelegraphSound)
+		{
+			UGameplayStatics::PlaySoundAtLocation(GetWorld(), TelegraphSound, GetOwner()->GetActorLocation());
+			if (bOffScreen)
+			{
+				UGameplayStatics::PlaySound2D(this, TelegraphSound);
+			}
+		}
 
 		UE_LOG(LogTemp, Log, TEXT("BossAction: Attack (windup rate %.2f%s, telegraph %.2fs%s)"),
 			WindupRate, bOffScreen ? TEXT(" off-screen") : TEXT(""),

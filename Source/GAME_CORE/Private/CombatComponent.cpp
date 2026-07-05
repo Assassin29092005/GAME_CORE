@@ -14,6 +14,7 @@
 #include "HAL/IConsoleManager.h"
 #include "HAL/PlatformTime.h"
 #include "Kismet/GameplayStatics.h"
+#include "Sound/SoundBase.h"
 
 #if !UE_BUILD_SHIPPING
 // guide.md 8.2 feel-debug overlay toggle. BossActionComponent.cpp registers the
@@ -179,10 +180,24 @@ void UCombatComponent::ApplyDamage(float DamageAmount, AActor* InstigatorActor, 
 				AttackerFeedback->TriggerHeavyHitFeedback(GetOwner());   // the long freeze
 			}
 
+			// The parry ting (guide.md 7.1.4): 2D = no spatialization, unmissable.
+			if (ParrySound)
+			{
+				UGameplayStatics::PlaySound2D(this, ParrySound);
+			}
+
 			UE_LOG(LogTemp, Log, TEXT("CombatComponent[%s]: PARRY — %.1f dmg negated, attacker %s staggered (window %.2fs)"),
 				GetOwner() ? *GetOwner()->GetName() : TEXT("?"),
 				DamageAmount, *InstigatorActor->GetName(), ParryWindow);
 			return;   // zero damage — a parry is not a block
+		}
+
+		// The block thud (guide.md 7.1) — both blocked outcomes (chip AND break)
+		// get the dedicated sound; ANS_DealDamage suppresses the generic flesh
+		// ImpactSound on blocked hits so this is THE audio cue for a block.
+		if (BlockSound && GetOwner())
+		{
+			UGameplayStatics::PlaySoundAtLocation(GetWorld(), BlockSound, GetOwner()->GetActorLocation());
 		}
 
 		const bool bHeavyAttack = (DamageType == FName("Heavy"));

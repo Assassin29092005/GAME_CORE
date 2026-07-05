@@ -225,15 +225,18 @@ void UANS_DealDamage::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequence
 		TargetHitReaction->PlayHitReaction(OwnerActor, DamageAmount, DamageType);
 	}
 
-	// Trigger hit feedback (hit stop, camera shake) — skip on no-op hits so a
-	// swing into a respawned/dead target doesn't stutter time for nothing.
+	// Trigger hit feedback (hit stop, camera shake, impact sound) — skip on no-op
+	// hits so a swing into a respawned/dead target doesn't stutter time for
+	// nothing, and skip on BLOCKED hits so a block doesn't read/sound identical
+	// to a clean flesh hit (the block montage + CombatComponent::BlockSound thud
+	// played inside ApplyDamage ARE the blocked-hit feedback).
 	// Weight is per-attack data (guide.md 3.4): chain finishers route through the
 	// heavy tier so they VISIBLY hit harder than openers; every other attack
 	// passes its FAttackAnimData feedback numbers through. Single-entry chains
 	// (boss/minion one-swing configs) are openers, not finishers — without the
 	// length check every boss hit would read as a finisher.
 	UHitFeedbackComponent* TargetFeedback = HitActor->FindComponentByClass<UHitFeedbackComponent>();
-	if (TargetFeedback && !bNoOpHit)
+	if (TargetFeedback && !bNoOpHit && !bBlocked)
 	{
 		const bool bComboFinisher = AttackerCombatGuard && AttackerCombatGuard->CombatConfig
 			&& AttackerCombatGuard->CombatConfig->GetComboLength() > 1

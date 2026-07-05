@@ -5,6 +5,7 @@
 #include "HitFeedbackComponent.generated.h"
 
 class UCameraShakeBase;
+class USoundBase;
 
 UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
 class GAME_CORE_API UHitFeedbackComponent : public UActorComponent
@@ -40,6 +41,19 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HitFeedback|CameraShake")
 	float CameraShakeScale = 1.0f;
 
+	// --- Impact Audio (guide.md 7.1.2) ---
+	/** Played at the owner's location on every confirmed hit. Lives here (not on
+	 *  the montages) so whiffs stay silent — TriggerHitFeedback only fires from
+	 *  the ANS_DealDamage hit path, and the sound inherits the per-attack weight
+	 *  scaling for free. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HitFeedback|Audio")
+	TObjectPtr<USoundBase> ImpactSound;
+
+	/** Louder/lower variant for TriggerHeavyHitFeedback (combo finishers, parry
+	 *  freeze). Falls back to ImpactSound when unset. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HitFeedback|Audio")
+	TObjectPtr<USoundBase> HeavyImpactSound;
+
 	// Call this when a hit lands
 	UFUNCTION(BlueprintCallable, Category = "HitFeedback")
 	void TriggerHitFeedback(AActor* Attacker);
@@ -60,6 +74,7 @@ private:
 	void PauseAttackerAnim(AActor* Attacker, float Duration);
 	void ResumeAttackerAnim();
 	void PlayCameraShake(float Scale, bool bHeavy = false);
+	void PlayImpactSound(bool bHeavy);
 
 	FTimerHandle HitStopTimerHandle;
 	FTimerHandle AnimPauseTimerHandle;

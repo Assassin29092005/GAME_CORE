@@ -10,6 +10,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnAttackLanded, float, DamageAmoun
 
 class UAnimInstance;
 class UMotionWarpingComponent;
+class USoundBase;
 
 /** One-shot combat intents the buffered-action queue can hold (guide.md 1.1). */
 UENUM(BlueprintType)
@@ -208,6 +209,20 @@ public:
 	 *  must ship with a player-readable telegraph and a retrained policy. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Block")
 	bool bParryEnabled = true;
+
+	/** The parry *ting* (guide.md 7.1.4) — a reward sound, brighter and longer-
+	 *  tailed than the block thud. Played 2D from the parry branch so it is never
+	 *  lost in the spatial mix. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Block")
+	TObjectPtr<USoundBase> ParrySound;
+
+	/** The block *thud* (guide.md 7.1) — played at the blocker's location from
+	 *  BOTH blocked-hit paths in ApplyDamage (reduced-damage chip AND heavy
+	 *  block-break), so a blocked hit never sounds identical to a clean flesh
+	 *  hit. ANS_DealDamage suppresses the generic ImpactSound/hit-stop on
+	 *  blocked hits for the same reason. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Block")
+	TObjectPtr<USoundBase> BlockSound;
 
 	/** Hook IA_Block Started -> true, Completed -> false. */
 	UFUNCTION(BlueprintCallable, Category = "Combat|Block")
