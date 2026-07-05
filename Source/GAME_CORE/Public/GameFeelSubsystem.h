@@ -37,7 +37,26 @@ private:
 	 *  timer once every enabled feature is installed. */
 	void TryInstall();
 
+	/** Shipped-path player-memory lifecycle. The M5 archetype bank matches
+	 *  against the STORED PlayerMemoryComponent profile, but outside training
+	 *  nothing loaded or recorded it (LoadMemory's only other caller is the
+	 *  Python bridge's set_player_id) — the bank was dead code in shipped play.
+	 *  The subsystem now: LoadMemory (Firebase UID, else "guest") BEFORE the NNE
+	 *  component is injected (its BeginPlay resolves the archetype match), and
+	 *  RecordEncounterEnd + SaveMemory at every round end. Training sessions
+	 *  (-rlbridge / live TCP client) skip recording — bot rounds must not
+	 *  pollute the human dossier (the -NoTelemetry philosophy). */
+	UFUNCTION()
+	void HandleHeroHealthDepleted();
+	UFUNCTION()
+	void HandleBossDied();
+	void RecordRoundEnd(bool bBossWon);
+
 	FTimerHandle InstallTimerHandle;
 	bool bCameraInstalled = false;
 	bool bHUDInstalled = false;
+	bool bMemoryLoaded = false;
+	bool bHeroDeathBound = false;
+	double RoundStartRealSeconds = 0.0;
+	double LastRoundEndRealSeconds = -10.0;
 };
