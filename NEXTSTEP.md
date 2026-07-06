@@ -1,11 +1,15 @@
 # NEXTSTEP.md — Path to Ship (rewritten 2026-07-05, post ship-path wave)
 
-> **State:** M0–M4 done (map at its AAA pass: terrain v2, 24.5k ground cover, clouds/grade,
-> floor ring + mountain backdrop; minions golem-bodied; feel layer + audio placeholders live).
-> **M5 code done + self-test PASS** (in-engine ONNX boss; untrained test brain wired).
-> **M6 game-side code done** (login/telemetry/taunts/community difficulty — needs your
-> Firebase keys). **M7 pages built** (taunts + World; needs deploy). Remaining: training
-> data, your shortlist below, Firebase go-live, M2 locomotion/tuning, M8 packaging.
+> **State (2026-07-06):** M0–M4 done (map at its AAA pass: terrain v2, 24.5k ground cover,
+> clouds/grade, floor ring + mountain backdrop; minions golem-bodied; feel layer + audio
+> placeholders live). **M5 LIVE end-to-end**: real brains in-engine (turtle 110k = default,
+> rusher 41k banked, kiter staged pending re-train), settings-driven archetype bank with
+> measured centroids + mean-centered cosine, and the shipped-path memory lifecycle
+> (GameFeelSubsystem load/record/save) that makes profile-matched selection actually run
+> outside training. **M6 game-side code done** (login/telemetry/taunts/community difficulty —
+> needs your Firebase keys). **M7 pages built** (taunts + World; needs deploy). **M8 cook
+> smoke PASS.** Remaining: more training data (kiter/counter/chaotic), your shortlist below,
+> Firebase go-live, M2 locomotion/tuning, real staged packaging.
 > Deep detail: [ROADMAP.md](ROADMAP.md) · [guide.md](guide.md) · [visuals.md](visuals.md) ·
 > [Website/README.md](Website/README.md) (the Firestore schema contract).
 
@@ -34,7 +38,9 @@ powershell -ExecutionPolicy Bypass -File Tools\run_training.ps1 -Persona rusher 
 - Verify ~10 min in: `Saved/Logs/GAME_CORE.log` shows `RLBridge: Client connection
   established` + sustained combat; TensorBoard (`cd Python; .\venv\Scripts\activate;
   tensorboard --logdir tb_logs`) shows curves + the mask-restriction-rate scalar.
-- Rotate personas nightly: `turtle`, `kiter`, `counter`, `chaotic`. After ≥2 nights:
+- Rotate personas nightly — remaining: `kiter` (re-run; the 6k-step attempt evals
+  dodge-only), `counter`, `chaotic`. Done: `rusher` 41k (banked), `turtle` 110k (default
+  brain). After ≥2 nights:
   `python train_world_model.py train`, `python train_transfer.py train_base`,
   `python train_maml.py meta_train` (no UE needed).
 - Pipeline self-check anytime: `cd Python; .\venv\Scripts\python.exe smoke_test.py` (~3 s).
@@ -77,14 +83,21 @@ powershell -ExecutionPolicy Bypass -File Tools\run_training.ps1 -Persona rusher 
 > NEXT TRAINING GAP: full overnight kiter run, re-eval, re-measure (4 eps is noise), then
 > uncomment the row.
 
-1. `cd Python` → export the best checkpoint (mirror `make_test_onnx.py`'s export call
-   against `checkpoints/<best>.zip`) → `SourceArt/Models/boss_rusher.onnx`
-2. Point `Tools/import_onnx_model.py`'s constants at it → run headlessly:
-   `UnrealEditor-Cmd ... -ExecutePythonScript="D:/GAME_CORE 5.8/Tools/import_onnx_model.py"`
-3. Update `Config/DefaultGame.ini` → `NNEBossModelData=/Game/Arena/Models/NNM_BossRusher...`
-4. Verify: `-game` launch WITHOUT Python → `boss.NNESelfTest` → fight it. Repeat per
-   persona into the ArchetypeBank (BP_Boss → NNEBossPolicyComponent) for profile-matched
-   boss selection. *(Claude does 1–3 headlessly on request.)*
+The per-persona promotion flow (current, post-archetype-bank — Claude does 1–4 headlessly):
+1. Export: `cd Python` → `venv\Scripts\python.exe export_onnx.py --model
+   checkpoints/<best>.zip --out ..\SourceArt\Models\boss_<persona>.onnx` (verifies
+   torch/SB3 agreement itself).
+2. **Eval gate** (the turtle-set bar): `venv\Scripts\python.exe eval_archetypes.py` —
+   promote only on a competent, non-degenerate kit (wins + mixed action distribution;
+   dodge-only = more training, see kiter). Losers stay staged like kiter.
+3. Import: set `NNE_ONNX_SRC` + `NNE_ASSET_NAME=NNM_Boss<Persona>` env vars → headless
+   `UnrealEditor-Cmd ... -ExecutePythonScript="D:/GAME_CORE 5.8/Tools/import_onnx_model.py"`.
+4. Wire: `venv\Scripts\python.exe measure_centroids.py` → paste the persona's
+   `+NNEArchetypeBank=(...)` row into `Config/DefaultGame.ini` (measured centroid, never
+   hand-authored). Only touch `NNEBossModelData=` if the new brain should REPLACE turtle
+   as the profile-less default. (The bank is ini-driven now — no BP_Boss component wiring.)
+5. Verify: `-game` launch WITHOUT Python → `boss.NNESelfTest` PASS + the
+   `NNEBossPolicy: ready — model ... [archetype: ...]` log line → fight it.
 
 ## PART 4 — REMAINING DEV WORK (Claude-drivable, ask or /loop it)
 
