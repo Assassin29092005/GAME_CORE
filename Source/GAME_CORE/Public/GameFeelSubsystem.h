@@ -64,6 +64,16 @@ public:
 	 *  cleared zone doesn't re-trigger on revisit. */
 	bool IsEncounterDefeated(FName EncounterID) const;
 
+	/** PlayerId currently used for the overworld save slot (Firebase UID or
+	 *  'guest'). Empty if never resolved. Exposed for the dev console
+	 *  command `overworld.ResetSave`. */
+	const FString& GetOverworldPlayerId() const { return CachedPlayerId; }
+
+	/** Drop the in-memory OverworldSave + cached PlayerId. The next
+	 *  LoadOverworldSave call will re-resolve identity + re-read disk.
+	 *  Used by `overworld.ResetSave` between playtest runs. */
+	void ClearOverworldState();
+
 private:
 	/** Timer body: installs whatever is enabled and already spawnable; clears the
 	 *  timer once every enabled feature is installed. */

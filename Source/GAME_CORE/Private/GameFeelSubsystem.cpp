@@ -340,6 +340,12 @@ bool UGameFeelSubsystem::IsEncounterDefeated(FName EncounterID) const
 	return OverworldSave && OverworldSave->DefeatedBossZones.Contains(EncounterID);
 }
 
+void UGameFeelSubsystem::ClearOverworldState()
+{
+	OverworldSave = nullptr;
+	CachedPlayerId.Reset();
+}
+
 void UGameFeelSubsystem::TryInstall()
 {
 	UWorld* World = GetWorld();
@@ -585,3 +591,39 @@ void UGameFeelSubsystem::RecordRoundEnd(bool bBossWon)
 	UE_LOG(LogTemp, Log, TEXT("GameFeelSubsystem: encounter recorded (bossWon=%d, %.0f s) — '%s' now at %d encounters."),
 		bBossWon ? 1 : 0, Duration, *Memory->GetCurrentPlayerId(), Memory->GetTotalEncounters());
 }
+
+// ---------------------------------------------------------------------------
+// Dev console commands (Phase G playtest helpers)
+// ---------------------------------------------------------------------------
+
+// Wipe the current player's OverworldSaveGame slot so save/load stress tests
+// have a clean starting state. In-memory state is cleared and the on-disk slot
+// is deleted for both 'guest' and any signed-in UID currently active.
+static FAutoConsoleCommandWithWorld GOverworldResetSaveCmd(
+	TEXT("overworld.ResetSave"),
+	TEXT("Delete the overworld save slot for the current player (guest or UID) "
+	     "and reset in-memory state. Use between save/load stress runs."),
+	FConsoleCommandWithWorldDelegate::CreateLambda([](UWorld* World)
+	{
+		if (!World) return;
+		UGameFeelSubsystem* Subsystem = World->GetSubsystem<UGameFeelSubsystem>();
+		if (!Subsystem)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("overworld.ResetSave: no GameFeelSubsystem in this world."));
+			return;
+		}
+		// Delete both slots defensively — the guest slot may exist from a
+		// pre-login run even if a UID is active.
+		for (const FString& Id : { FString(TEXT("guest")), Subsystem->GetOverworldPlayerId() })
+		{
+			if (Id.IsEmpty()) continue;
+			const FString SlotName = UOverworldSaveGame::SlotNameForPlayer(Id);
+			if (UGameplayStatics::DoesSaveGameExist(SlotName, UOverworldSaveGame::UserIndex))
+			{
+				UGameplayStatics::DeleteGameInSlot(SlotName, UOverworldSaveGame::UserIndex);
+				UE_LOG(LogTemp, Display, TEXT("overworld.ResetSave: deleted slot '%s'."), *SlotName);
+			}
+		}
+		Subsystem->ClearOverworldState();
+		UE_LOG(LogTemp, Display, TEXT("overworld.ResetSave: in-memory state cleared."));
+	}));
