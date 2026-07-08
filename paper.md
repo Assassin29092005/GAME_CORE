@@ -49,8 +49,8 @@ Pick one when framing the paper — each frames a different contribution as prim
 > short-horizon planning, an emotion estimator, and MAML meta-learning — share
 > a single dynamic observation space (17–29 dims) and can be toggled independently.
 > A player-facing dashboard (Firebase-backed) closes the loop with a behavior radar,
-> emotion timeline, fight log, contextual taunts, and a "One Boss" community
-> aggregate. We report training curves, offline archetype evaluation results,
+> emotion timeline, fight log, contextual taunts, and a "one mind, many encounters"
+> community aggregate. We report training curves, offline archetype evaluation results,
 > integration/latency measurements, and a system-level description that we
 > believe is the first end-to-end account of shipping player-adaptive RL boss
 > AI into a real UE5 title with a live analytics loop.
@@ -130,17 +130,25 @@ Each contribution is stated as a defensible claim tied to a code artifact.
    twenty. Persistence is Firebase-UID-keyed when logged in and `guest`
    when not (`GameFeelSubsystem::BeginPlay`).
 
-5. **Archetype-matched policy selection via mean-centered cosine similarity.**
-   At runtime, `UNNEBossPolicyComponent` matches the stored player profile
-   against per-persona measured centroids in a settings-driven archetype
-   bank (`Config/DefaultGame.ini` `+NNEArchetypeBank`). Mean-centering
-   at 0.5 (the neutral profile value) is the key methodological detail:
-   raw cosine on all-positive profiles saturates near 1 and barely
-   discriminates. A BP-authored `ArchetypeProfiles` asset overrides the
-   ini bank when present. The lifecycle (LoadMemory before injection;
+5. **Archetype-matched policy selection via mean-centered cosine similarity,
+   fired per encounter.** At each encounter start (a player-triggered event
+   in the streamed open world — an `ABossEncounterVolume` overlap in Tier 4
+   of this codebase; a single-arena world-load in earlier milestones),
+   `UNNEBossPolicyComponent` matches the stored player profile against
+   per-persona measured centroids in a settings-driven archetype bank
+   (`Config/DefaultGame.ini` `+NNEArchetypeBank`). Mean-centering at 0.5
+   (the neutral profile value) is the key methodological detail: raw cosine
+   on all-positive profiles saturates near 1 and barely discriminates. A
+   BP-authored `ArchetypeProfiles` asset overrides the ini bank when present.
+   The encounter-triggered form multiplies the match evidence per session
+   (multiple biomes → multiple resolutions against a profile the previous
+   encounter just mutated). The lifecycle (LoadMemory before injection;
    RecordEncounterEnd + SaveMemory on round end, debounced; skipped under
    `-rlbridge`) is owned by `GameFeelSubsystem` — without this, the bank is
-   dead code in shipped play.
+   dead code in shipped play. When the cosine match has no signal (new /
+   guest player, zero encounters), the encounter volume's declared
+   `PreferredPersonaFallback` (a biome-level intent — e.g., "desert biome
+   prefers rusher") wins over the settings-driven global default.
 
 6. **MaskablePPO with a C++-authored legal-action mask travelling in the
    observation JSON.** `BossActionComponent::GetLegalActionMask` computes a
@@ -175,7 +183,9 @@ Each contribution is stated as a defensible claim tied to a code artifact.
    into per-round JSON that the Firestore-backed dashboard renders as a
    taunt panel alongside the profile radar, emotion timeline, and fight log.
    The community `meta/global` document aggregates statistics across all
-   uploads for a "One Boss" world-page counter.
+   uploads for a "one mind, many encounters" world-page counter — the
+   pitch: one policy space (bank + resolver) fights every player, and its
+   picks are logged.
 
 10. **A shipping arbitration policy that keeps training and deployment
     honest.** A live TCP RL client on port 5555, or a `-rlbridge` launch
@@ -448,10 +458,11 @@ Depending on target venue, the following extra runs will strengthen claims.
    scripted BT boss, (b) a single RL brain, (c) archetype-matched RL
    brains. Engagement measured via emotion estimator + self-report on a
    short questionnaire + survival time + retry rate.
-6. **Community "One Boss" longitudinal read.** Assuming the site goes
-   live (NEXTSTEP Part 0 item 5), the `meta/global` counter across N
-   weeks is an interesting field observation to report — global win rate,
-   most-frequent archetype match.
+6. **Community "one mind, many encounters" longitudinal read.** Assuming
+   the site goes live (NEXTSTEP Part 0 item 5), the `meta/global` counter
+   across N weeks is an interesting field observation to report — global
+   win rate, most-frequent archetype match, per-biome archetype
+   distribution (Tier 4 overworld only).
 
 ## 11. Figures and screenshots we can supply
 
@@ -473,12 +484,26 @@ Best candidates for Figure 1 (system overview) and Figure 2
 
 ### 11.2 In-game screenshots (capturable from the packaged build)
 
-- Arena wide shot (dressed environment, floor ring, backdrop, ash motes)
-- Boss telegraph — red unblockable / yellow parryable indicators
-- Boss status HUD — HP bar with GoW-style damage chip, poise bar
-- Combat close-up — combo hit landing with camera shake + hit-stop
-- Minion patrol encounter — golem-bodied minions, BT-driven
-- Dodge i-frame moment (motion-warp target visualised via `combat.DebugHUD 1`)
+- **Overworld map wide shot** — high-oblique of the 2 km streamed
+  World-Partition-partitioned landscape with all five biomes visible
+  (castle plateau + moat, W marsh, NE desert, SW mountains, plains). Doubles
+  as Figure 1 (system overview illustration).
+- **Per-biome mid-shot × 5** — one for each biome, with the biome's
+  matched boss brain telegraphing in the foreground (paper.md §4 point 5
+  mechanism illustrated at each stop).
+- **Encounter-volume transition** — first frame of exploration cam,
+  first frame of combat cam (arm length + FOV interp between them makes
+  a clean two-panel figure).
+- **Arena wide shot** (legacy `BossArena.umap`, retained for
+  before/after comparison) — dressed environment, floor ring, backdrop,
+  ash motes.
+- Boss telegraph — red unblockable / yellow parryable indicators.
+- Boss status HUD — HP bar with GoW-style damage chip, poise bar.
+- Combat close-up — combo hit landing with camera shake + hit-stop.
+- Minion patrol encounter — golem-bodied minions, BT-driven,
+  scattered across biomes.
+- Dodge i-frame moment (motion-warp target visualised via
+  `combat.DebugHUD 1`).
 
 ### 11.3 Dashboard screenshots
 
@@ -534,6 +559,14 @@ Anticipate reviewer questions.
   effect-size framing.
 - All numbers reported are single-machine (RTX 4050 / 16 GB). Cross-hardware
   generalisation of latency claims is out of scope.
+- **World-perf budget is single-machine.** The streamed 2 km overworld
+  (World Partition, 1 km cells, 5 km HLOD1 cull) has been perf-tuned on
+  the same RTX 4050 dev target as the arena — GPU budget ≤ 14 ms per
+  frame at 1080p Medium. On different targets (or with the full
+  Nanite-on dressing pass enabled), foliage draw distances and cloud
+  view-sample counts are likely to need re-tuning. Cross-target
+  generalisation is future work; the paper reports single-target
+  numbers only.
 
 ## 14. Reproducibility appendix
 
