@@ -67,6 +67,13 @@ def _step(name):
 
 
 def _get_world():
+    # UE 5.4+ deprecates EditorLevelLibrary.get_editor_world in favor of the
+    # UnrealEditorSubsystem. Prefer the new API when present.
+    subsys = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem)
+    if subsys is not None:
+        w = subsys.get_editor_world()
+        if w is not None:
+            return w
     return unreal.EditorLevelLibrary.get_editor_world()
 
 
@@ -118,13 +125,13 @@ def _trace_down(world, xy):
     """Return world Z of the landscape hit at (x, y), or None if none."""
     start = unreal.Vector(xy[0], xy[1], TRACE_START_Z)
     end = unreal.Vector(xy[0], xy[1], TRACE_END_Z)
-    # Use a static-collision line trace against WorldStatic. Landscape components
-    # are on that channel by default.
+    trace_channel = getattr(unreal.TraceTypeQuery, "ECC_VISIBILITY",
+                            unreal.TraceTypeQuery.TRACE_TYPE_QUERY1)
     hit = unreal.SystemLibrary.line_trace_single(
         world,
         start,
         end,
-        unreal.TraceTypeQuery.TRACE_TYPE_QUERY1,  # Visibility
+        trace_channel,
         False,
         [],
         unreal.DrawDebugTrace.NONE,
@@ -133,9 +140,21 @@ def _trace_down(world, xy):
         unreal.LinearColor.GREEN,
         5.0,
     )
-    if hit:
-        return hit.impact_point.z
-    return None
+    if not hit:
+        return None
+    # UE 5.8 HitResult exposes 'location' (impact position for a blocking hit).
+    # 'impact_point' was the pre-5.4 name. Fall through both defensively.
+    for attr in ("impact_point", "location"):
+        pt = getattr(hit, attr, None)
+        if pt is not None:
+            return pt.z
+    # Some builds return an FHitResult where the fields are only reachable via
+    # get_editor_property (structs). Last-ditch:
+    try:
+        pt = hit.get_editor_property("location")
+        return pt.z
+    except Exception:
+        return None
 
 
 @_step("2. Snap REGION_* dressing actors to landscape")
