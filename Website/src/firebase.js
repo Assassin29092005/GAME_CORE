@@ -9,12 +9,13 @@ import { getFirestore } from "firebase/firestore";
 // develop and preview everything locally.
 // ─────────────────────────────────────────────────────────────────────────────
 export const firebaseConfig = {
-  apiKey: "PASTE_API_KEY",
-  authDomain: "PASTE_PROJECT.firebaseapp.com",
-  projectId: "PASTE_PROJECT_ID",
-  storageBucket: "PASTE_PROJECT.appspot.com",
-  messagingSenderId: "PASTE_SENDER_ID",
-  appId: "PASTE_APP_ID",
+  apiKey: "AIzaSyB2lwikxfS9IANzD_YzFtPQZBf0oF3uFHc",
+  authDomain: "game-4cedf.firebaseapp.com",
+  projectId: "game-4cedf",
+  storageBucket: "game-4cedf.firebasestorage.app",
+  messagingSenderId: "551713539905",
+  appId: "1:551713539905:web:8dc818086a9ee5465903c0",
+  measurementId: "G-GZ7S17R815"
 };
 
 export const isConfigured = !/^PASTE_/.test(firebaseConfig.apiKey);

@@ -70,7 +70,7 @@ MAP_PATH = "/Game/Maps/BossArena"       # the ONLY level this script may touch
 LABEL_PREFIX = "ARENA_AAA_FX_"          # additive family; ARENA_DRESS_* untouched
 FX_DIR = "/Game/Arena/FX"
 
-DO_SNOWFALL = False                     # flip True for the snow variant pass
+DO_SNOWFALL = True                     # flip True for the snow variant pass
 
 # Template candidates, probed in order. First entry per list is the spec's
 # claimed path (absent in 5.8 -- probed anyway: zero cost, and the script
