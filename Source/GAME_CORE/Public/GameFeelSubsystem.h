@@ -59,6 +59,11 @@ public:
 	 *  switches the camera back to Exploration mode. */
 	void EndEncounter(class ABossEncounterVolume* Volume);
 
+	/** True if this session has cleared the given encounter zone (loaded from
+	 *  UOverworldSaveGame). Consulted by ABossEncounterVolume::BeginPlay so a
+	 *  cleared zone doesn't re-trigger on revisit. */
+	bool IsEncounterDefeated(FName EncounterID) const;
+
 private:
 	/** Timer body: installs whatever is enabled and already spawnable; clears the
 	 *  timer once every enabled feature is installed. */
@@ -89,6 +94,21 @@ private:
 	/** Guards the one-time overworld-volume scan in TryInstall so PIE re-runs
 	 *  redetect (per-subsystem member instead of function-local static). */
 	bool bLevelInspected = false;
+
+	/** Loaded once at overworld level begin: player pos/rot restore + set of
+	 *  defeated encounters. Written back on every encounter end and on world
+	 *  teardown. Null in arena mode. */
+	UPROPERTY()
+	TObjectPtr<class UOverworldSaveGame> OverworldSave;
+
+	/** PlayerId used for the current save slot. Cached from BeginEncounter's
+	 *  memory-load step so save calls don't re-resolve Firebase auth. */
+	FString CachedPlayerId;
+
+	/** Load/save helpers (overworld mode only). */
+	void LoadOverworldSave();
+	void SaveOverworldSave();
+	void EnsurePlayerIdCached();
 
 	/** Currently-active encounter (Tier 4). One at a time by design. */
 	UPROPERTY()

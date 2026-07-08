@@ -13,8 +13,10 @@
 #include "Kismet/GameplayStatics.h"
 #include "LockOnComponent.h"
 #include "Misc/CommandLine.h"
+#include "Misc/DateTime.h"
 #include "Misc/Parse.h"
 #include "NNEBossPolicyComponent.h"
+#include "OverworldSaveGame.h"
 #include "PlayerMemoryComponent.h"
 #include "PlayerProfileComponent.h"
 #include "RLBridgeComponent.h"
@@ -216,6 +218,8 @@ void UGameFeelSubsystem::EndEncounter(ABossEncounterVolume* Volume)
 	}
 
 	AActor* Boss = Volume->BossActor.Get();
+	const bool bBossDefeated = Boss ? (Boss->FindComponentByClass<UCombatComponent>() ? Boss->FindComponentByClass<UCombatComponent>()->IsDead() : false) : false;
+
 	if (Boss)
 	{
 		if (UBossActionComponent* BossAction = Boss->FindComponentByClass<UBossActionComponent>())
@@ -232,10 +236,108 @@ void UGameFeelSubsystem::EndEncounter(ABossEncounterVolume* Volume)
 	}
 
 	SetCameraMode(ECameraMode::Exploration);
+
+	// Phase E save-state: on a defeated boss, mark the zone cleared. Player retreat
+	// leaves the zone re-enterable (Volume->bAlreadyDefeated stays false).
+	if (bBossDefeated && OverworldSave)
+	{
+		OverworldSave->DefeatedBossZones.Add(Volume->EncounterID);
+
+		FOverworldEncounterRecord Record;
+		Record.EncounterID = Volume->EncounterID;
+		Record.bBossDefeated = true;
+		Record.DurationSeconds = static_cast<float>(FPlatformTime::Seconds() - RoundStartRealSeconds);
+		Record.EndUnixSeconds = FDateTime::UtcNow().ToUnixTimestamp();
+		if (Boss)
+		{
+			if (UNNEBossPolicyComponent* Policy = Boss->FindComponentByClass<UNNEBossPolicyComponent>())
+			{
+				Record.SelectedPersona = Policy->GetSelectedArchetype();
+			}
+		}
+		OverworldSave->EncounterLog.Add(Record);
+	}
+
+	// Save on ANY encounter end so the player's last position is captured.
+	if (bOverworldMode)
+	{
+		if (APawn* HeroPawn = UGameplayStatics::GetPlayerPawn(World, 0))
+		{
+			if (OverworldSave)
+			{
+				OverworldSave->PlayerLocation = HeroPawn->GetActorLocation();
+				if (APlayerController* PC = Cast<APlayerController>(HeroPawn->GetController()))
+				{
+					OverworldSave->PlayerRotation = PC->GetControlRotation();
+				}
+			}
+		}
+		SaveOverworldSave();
+	}
+
 	ActiveEncounter = nullptr;
 
-	UE_LOG(LogTemp, Log, TEXT("GameFeelSubsystem::EndEncounter: '%s' released."),
-		*Volume->EncounterID.ToString());
+	UE_LOG(LogTemp, Log, TEXT("GameFeelSubsystem::EndEncounter: '%s' released (defeated=%d)."),
+		*Volume->EncounterID.ToString(), bBossDefeated ? 1 : 0);
+}
+
+void UGameFeelSubsystem::EnsurePlayerIdCached()
+{
+	if (!CachedPlayerId.IsEmpty()) return;
+	CachedPlayerId = TEXT("guest");
+	if (UWorld* World = GetWorld())
+	{
+		if (const UGameInstance* GameInstance = World->GetGameInstance())
+		{
+			if (const UFirebaseAuthSubsystem* Auth = GameInstance->GetSubsystem<UFirebaseAuthSubsystem>())
+			{
+				if (!Auth->GetUid().IsEmpty())
+				{
+					CachedPlayerId = Auth->GetUid();
+				}
+			}
+		}
+	}
+}
+
+void UGameFeelSubsystem::LoadOverworldSave()
+{
+	EnsurePlayerIdCached();
+	const FString SlotName = UOverworldSaveGame::SlotNameForPlayer(CachedPlayerId);
+
+	if (UGameplayStatics::DoesSaveGameExist(SlotName, UOverworldSaveGame::UserIndex))
+	{
+		OverworldSave = Cast<UOverworldSaveGame>(
+			UGameplayStatics::LoadGameFromSlot(SlotName, UOverworldSaveGame::UserIndex));
+	}
+	if (!OverworldSave)
+	{
+		OverworldSave = Cast<UOverworldSaveGame>(
+			UGameplayStatics::CreateSaveGameObject(UOverworldSaveGame::StaticClass()));
+	}
+
+	if (OverworldSave)
+	{
+		UE_LOG(LogTemp, Log, TEXT("GameFeelSubsystem: overworld save loaded ('%s', %d defeated zones, %d encounters logged)."),
+			*SlotName, OverworldSave->DefeatedBossZones.Num(), OverworldSave->EncounterLog.Num());
+	}
+}
+
+void UGameFeelSubsystem::SaveOverworldSave()
+{
+	if (!OverworldSave || CachedPlayerId.IsEmpty()) return;
+	OverworldSave->LastSavedUnixSeconds = FDateTime::UtcNow().ToUnixTimestamp();
+	const FString SlotName = UOverworldSaveGame::SlotNameForPlayer(CachedPlayerId);
+	const bool bOk = UGameplayStatics::SaveGameToSlot(OverworldSave, SlotName, UOverworldSaveGame::UserIndex);
+	if (!bOk)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GameFeelSubsystem: SaveGameToSlot failed for '%s'."), *SlotName);
+	}
+}
+
+bool UGameFeelSubsystem::IsEncounterDefeated(FName EncounterID) const
+{
+	return OverworldSave && OverworldSave->DefeatedBossZones.Contains(EncounterID);
 }
 
 void UGameFeelSubsystem::TryInstall()
@@ -261,6 +363,7 @@ void UGameFeelSubsystem::TryInstall()
 		if (bOverworldMode)
 		{
 			UE_LOG(LogTemp, Log, TEXT("GameFeelSubsystem: overworld mode — encounter volumes own the boss-side install."));
+			LoadOverworldSave();
 		}
 	}
 
@@ -286,6 +389,20 @@ void UGameFeelSubsystem::TryInstall()
 				if (ULockOnComponent* LockOn = HeroPawn->FindComponentByClass<ULockOnComponent>())
 				{
 					LockOn->SetActive(false);
+				}
+
+				// Restore saved player pos/rot if a save was loaded. Only teleport
+				// once per world (bCameraInstalled becomes true on the same tick
+				// so this block is one-shot on the first successful install).
+				if (OverworldSave)
+				{
+					HeroPawn->SetActorLocation(OverworldSave->PlayerLocation, /*bSweep=*/false, /*OutSweepHitResult=*/nullptr, ETeleportType::TeleportPhysics);
+					if (APlayerController* PC = Cast<APlayerController>(HeroPawn->GetController()))
+					{
+						PC->SetControlRotation(OverworldSave->PlayerRotation);
+					}
+					UE_LOG(LogTemp, Log, TEXT("GameFeelSubsystem: restored player pos %s from save."),
+						*OverworldSave->PlayerLocation.ToString());
 				}
 			}
 			bCameraInstalled = true;

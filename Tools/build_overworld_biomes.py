@@ -466,6 +466,70 @@ def do_postprocess():
 
 
 # ---------------------------------------------------------------------------
+# Minion patrol spawners per biome (Phase E2)
+# ---------------------------------------------------------------------------
+
+MINION_SPAWNER_CLASS_PATH = "/Script/GAME_CORE.MinionEncounterSpawner"
+MINIONS_PER_BIOME = 2  # 2 spawners per biome — 10 total on the overworld
+
+# Approximate spawner offsets per biome from region center (UU). Kept modest so
+# minions patrol away from the biome's boss encounter (which owns the center).
+MINION_SPAWNER_OFFSETS = {
+    "castle":    [(6000, 6000), (-6000, -6000)],   # opposite corners of plateau
+    "marsh":     [(-70000, 10000), (-50000, -25000)],
+    "desert":    [(60000, 60000), (85000, 30000)],
+    "plains":    [(35000, -25000), (60000, -60000)],
+    "mountains": [(-70000, -70000), (-45000, -55000)],
+}
+
+
+def _region_center(biome):
+    b = REGION_BOUNDS[biome]
+    if b["kind"] == "circle":
+        return b["center"]
+    return ((b["min"][0] + b["max"][0]) / 2.0, (b["min"][1] + b["max"][1]) / 2.0)
+
+
+@_step("Minion spawners (Phase E2)")
+def place_minion_spawners():
+    _require_overworld()
+
+    spawner_class = unreal.EditorAssetLibrary.load_blueprint_class(MINION_SPAWNER_CLASS_PATH)
+    if spawner_class is None:
+        # Fallback: try load_class directly (C++ class, not a BP)
+        spawner_class = unreal.load_class(None, MINION_SPAWNER_CLASS_PATH + "_C")
+    if spawner_class is None:
+        # Direct C++ resolve
+        spawner_class = unreal.MinionEncounterSpawner if hasattr(unreal, "MinionEncounterSpawner") else None
+    if spawner_class is None:
+        raise StepSkip("MinionEncounterSpawner class not resolvable — "
+                       "compile the GAME_CORE module first")
+
+    subsys = _get_actor_subsystem()
+    world = _get_world()
+    if world is None:
+        raise StepSkip("no editor world")
+
+    # Sweep prior spawners this script placed
+    label_prefix = LABEL_PREFIX + "MINION_"
+    _sweep(label_prefix)
+
+    total = 0
+    for biome, offsets in MINION_SPAWNER_OFFSETS.items():
+        cx, cy = _region_center(biome)
+        for i, (dx, dy) in enumerate(offsets):
+            loc = unreal.Vector(cx + dx, cy + dy, 200.0)
+            rot = unreal.Rotator(0.0, 0.0, 0.0)
+            actor = subsys.spawn_actor_from_class(spawner_class, loc, rot)
+            if actor is None:
+                continue
+            actor.set_actor_label("%s%s_%02d" % (label_prefix, biome.upper(), i))
+            total += 1
+
+    return "%d minion spawners placed" % total
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -490,6 +554,7 @@ def main():
         fn()
 
     do_postprocess()
+    place_minion_spawners()
 
     # Save the level so the spawned actors persist
     try:

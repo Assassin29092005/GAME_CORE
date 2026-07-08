@@ -18,6 +18,22 @@ void ABossEncounterVolume::BeginPlay()
 	OnActorBeginOverlap.AddDynamic(this, &ABossEncounterVolume::OnPlayerBeginOverlap);
 	OnActorEndOverlap.AddDynamic(this, &ABossEncounterVolume::OnPlayerEndOverlap);
 
+	// Phase E: honor the saved defeated-zone bitfield. GameFeelSubsystem loads
+	// the save at world begin (before ABossEncounterVolume::BeginPlay via world-
+	// subsystem OnWorldBeginPlay), so this check has the latest state.
+	if (UWorld* World = GetWorld())
+	{
+		if (UGameFeelSubsystem* Subsystem = World->GetSubsystem<UGameFeelSubsystem>())
+		{
+			if (Subsystem->IsEncounterDefeated(EncounterID))
+			{
+				bAlreadyDefeated = true;
+				UE_LOG(LogTemp, Log, TEXT("BossEncounterVolume '%s': loaded from save as already defeated."),
+					*EncounterID.ToString());
+			}
+		}
+	}
+
 	if (BossActor.IsNull())
 	{
 		UE_LOG(LogTemp, Warning, TEXT("BossEncounterVolume '%s': BossActor is null — this volume is inert."),
