@@ -323,27 +323,56 @@ def step_3_create_level():
         removed = _sweep_labeled_actors(LABEL_PREFIX)
         return "reopened existing level (%d prior OVERWORLD_ actors cleaned)" % removed
 
-    # Try World Partition template first (UE 5.0+)
-    tpl_used = None
-    for template in (
-        unreal.NewLevelTemplate.EMPTY_LEVEL,
-        unreal.NewLevelTemplate.OPEN_WORLD,     # WP template if available
-    ):
+    # UE 5.8 Python doesn't reliably expose new_level / new_level_from_template
+    # (unreal.NewLevelTemplate enum missing in some builds; new_level exists but
+    # sometimes returns False without side-effects for /Game/Maps/... paths). Try
+    # every avenue, then degrade to a SKIP with clear manual instructions.
+    tried = []
+    for attempt in ("LevelEditorSubsystem.new_level",
+                    "EditorLevelLibrary.new_level_from_template.EMPTY_LEVEL",
+                    "EditorLevelLibrary.new_level_from_template.OPEN_WORLD",
+                    "EditorLevelLibrary.new_level"):
         try:
-            ok = unreal.EditorLevelLibrary.new_level_from_template(MAP_PATH, template.value)
-            if ok:
-                tpl_used = template.name
-                break
-        except Exception:
-            continue
+            if attempt == "LevelEditorSubsystem.new_level":
+                subsys = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
+                if subsys is None:
+                    tried.append((attempt, "subsys None"))
+                    continue
+                if subsys.new_level(MAP_PATH):
+                    unreal.EditorAssetLibrary.save_asset(MAP_PATH)
+                    return "level created via %s" % attempt
+                tried.append((attempt, "returned False"))
+            elif attempt.startswith("EditorLevelLibrary.new_level_from_template"):
+                tpl = getattr(unreal, "NewLevelTemplate", None)
+                if tpl is None:
+                    tried.append((attempt, "NewLevelTemplate enum missing"))
+                    continue
+                variant = getattr(tpl, attempt.rsplit(".", 1)[-1], None)
+                if variant is None:
+                    tried.append((attempt, "variant missing"))
+                    continue
+                if unreal.EditorLevelLibrary.new_level_from_template(MAP_PATH, variant.value):
+                    unreal.EditorAssetLibrary.save_asset(MAP_PATH)
+                    return "level created via %s" % attempt
+                tried.append((attempt, "returned False"))
+            elif attempt == "EditorLevelLibrary.new_level":
+                if unreal.EditorLevelLibrary.new_level(MAP_PATH):
+                    unreal.EditorAssetLibrary.save_asset(MAP_PATH)
+                    return "level created via %s" % attempt
+                tried.append((attempt, "returned False"))
+        except Exception as e:
+            tried.append((attempt, str(e)[:80]))
 
-    if tpl_used is None:
-        # Bare new_level fallback
-        unreal.EditorLevelLibrary.new_level(MAP_PATH)
-        tpl_used = "EMPTY (bare)"
-
-    unreal.EditorAssetLibrary.save_asset(MAP_PATH)
-    return "level created from template=%s" % tpl_used
+    # All avenues failed — surface manual instructions and skip the rest.
+    lines = ["level auto-create failed — attempts:"]
+    for a, err in tried:
+        lines.append("    %s -> %s" % (a, err))
+    lines.append("")
+    lines.append("  MANUAL: File -> New Level -> 'Empty Open World'; File -> Save")
+    lines.append("          Current Level As -> Content/Maps/Overworld. Then re-run")
+    lines.append("          this script to spawn nav bounds.")
+    CTX["extra_manual"].append("\n".join(lines))
+    raise StepSkip("all auto-create paths failed — see extra manual note")
 
 
 # ---------------------------------------------------------------------------
