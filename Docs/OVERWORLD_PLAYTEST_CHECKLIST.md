@@ -140,3 +140,42 @@ Any box unticked → open a follow-up commit before Phase H.
 The paper's Figure 1 (overworld wide shot) and Figure 2 (five biomes +
 five telegraphs) can be captured during this pass — leave PIE up, use
 `HighResShot 4` in the console at each biome vantage.
+
+---
+
+## H — Cook + package smoke (30 min)
+
+Cook config is already committed:
+- `[/Script/UnrealEd.ProjectPackagingSettings]` gains
+  `+DirectoriesToAlwaysCook=(Path="/Game/Overworld")` and
+  `+DirectoriesToAlwaysCook=(Path="/Game/Maps")`. `/Game/Arena/Models`
+  (NNE brains) stays untouched.
+
+Procedure:
+
+1. **Editor closed.** Run:
+   ```
+   "C:\Program Files\Epic Games\UE_5.8\Engine\Build\BatchFiles\RunUAT.bat"
+   BuildCookRun -project="D:\GAME_CORE 5.8\GAME_CORE.uproject"
+   -noP4 -platform=Win64 -clientconfig=Development
+   -cook -pak -stage -archive
+   -archivedirectory="D:\GAME_CORE 5.8\Saved\StagedBuilds"
+   -map=BossArena+Overworld
+   ```
+2. **Watch the cook log** (`Saved/Logs/Cook-*.log`) for red 'MissingAsset'
+   entries. Expected clean; if a Fab pack asset warns, the mesh path is
+   wrong in `Tools/build_overworld_biomes.py` PALETTE — fix + re-run
+   Phase D.
+3. **Boot the packaged build:** launch
+   `Saved/StagedBuilds/Windows/GAME_CORE.exe`.
+4. **Parity check across all 5 biomes:** same steps as G2/G3 above but
+   in the packaged build.
+   - [ ] Overworld level loads. Landscape + biome dressing visible.
+   - [ ] Encounter volume triggers each of the 5 archetype-matched brains.
+   - [ ] `Saved/SaveGames/OverworldSaveGame_*.sav` writes on defeat.
+   - [ ] BossArena.umap parity: launch from main-menu (or `-Map=BossArena`
+         command-line) and combat plays identically to the Development
+         editor build.
+
+If all H boxes ticked → merge `feat/overworld` → main. Paper submission
+timeline resumes from `paper.md` §10 (ablation runs / human study).
