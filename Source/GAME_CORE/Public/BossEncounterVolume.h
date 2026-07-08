@@ -80,6 +80,12 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Encounter")
 	bool IsEncounterActive() const { return bEncounterActive; }
 
+	/** Boss-death dynamic delegate target. Public because UGameFeelSubsystem
+	 *  binds this at BeginEncounter time (external UFUNCTION delegate targets
+	 *  must be accessible from the binder's compilation unit). */
+	UFUNCTION()
+	void OnBossDefeated();
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -89,9 +95,6 @@ protected:
 
 	UFUNCTION()
 	void OnPlayerEndOverlap(AActor* OverlappedActor, AActor* OtherActor);
-
-	UFUNCTION()
-	void OnBossDefeated();
 
 private:
 	/** True between BeginEncounter and EndEncounter — used to reject overlap
