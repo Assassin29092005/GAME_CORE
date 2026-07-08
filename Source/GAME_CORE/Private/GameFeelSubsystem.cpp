@@ -1,11 +1,13 @@
 #include "GameFeelSubsystem.h"
 
 #include "BossActionComponent.h"
+#include "BossEncounterVolume.h"
 #include "BossStatusHUD.h"
 #include "CombatCameraComponent.h"
 #include "CombatComponent.h"
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "FirebaseAuthSubsystem.h"
 #include "GameFeelSettings.h"
 #include "Kismet/GameplayStatics.h"
@@ -83,12 +85,184 @@ void UGameFeelSubsystem::SetCameraMode(ECameraMode NewMode)
 	}
 }
 
+void UGameFeelSubsystem::BeginEncounter(ABossEncounterVolume* Volume)
+{
+	if (!Volume) return;
+
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	// Reject overlap-during-encounter — only one encounter runs at a time. If
+	// somehow a second volume fires (level author error, two volumes overlap),
+	// the first one owns the fight until it ends.
+	if (ActiveEncounter && ActiveEncounter != Volume)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GameFeelSubsystem::BeginEncounter: '%s' fired while '%s' is active — ignoring."),
+			*Volume->GetName(), *ActiveEncounter->GetName());
+		return;
+	}
+	if (ActiveEncounter == Volume)
+	{
+		return;  // idempotent
+	}
+	ActiveEncounter = Volume;
+
+	AActor* Boss = Volume->BossActor.Get();
+	if (Boss == nullptr)
+	{
+		Boss = Volume->BossActor.LoadSynchronous();
+	}
+	if (!Boss)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GameFeelSubsystem::BeginEncounter: volume '%s' has null BossActor."),
+			*Volume->GetName());
+		ActiveEncounter = nullptr;
+		return;
+	}
+
+	// Reveal the boss + turn collision on. Level authoring hides these actors on
+	// begin-play; this is the mirror.
+	Boss->SetActorHiddenInGame(false);
+	Boss->SetActorEnableCollision(true);
+
+	const UGameFeelSettings* Settings = GetDefault<UGameFeelSettings>();
+
+	// HUD injection (per-boss, not per-level). Idempotent — FindComponentByClass
+	// short-circuits if this boss already carries one from a prior encounter.
+	if (Settings->bEnableBossStatusHUD)
+	{
+		if (!Boss->FindComponentByClass<UBossStatusHUDComponent>())
+		{
+			UBossStatusHUDComponent* HUDComp =
+				NewObject<UBossStatusHUDComponent>(Boss, TEXT("BossStatusHUDComponent"));
+			HUDComp->RegisterComponent();
+		}
+	}
+
+	// Player-memory load (Firebase UID or "guest"). Idempotent within a PlayerId:
+	// LoadMemory is a no-op if GetCurrentPlayerId() already matches. Per-encounter
+	// call keeps the profile fresh if the previous encounter's RecordEncounterEnd
+	// mutated something the archetype resolver reads.
+	if (UPlayerMemoryComponent* Memory = Boss->FindComponentByClass<UPlayerMemoryComponent>())
+	{
+		if (Memory->GetCurrentPlayerId().IsEmpty())
+		{
+			FString PlayerId = TEXT("guest");
+			if (const UGameInstance* GameInstance = World->GetGameInstance())
+			{
+				if (const UFirebaseAuthSubsystem* Auth = GameInstance->GetSubsystem<UFirebaseAuthSubsystem>())
+				{
+					if (!Auth->GetUid().IsEmpty())
+					{
+						PlayerId = Auth->GetUid();
+					}
+				}
+			}
+			Memory->LoadMemory(PlayerId);
+			UE_LOG(LogTemp, Log, TEXT("GameFeelSubsystem::BeginEncounter: memory loaded for '%s' (%d stored encounters)."),
+				*PlayerId, Memory->GetTotalEncounters());
+		}
+	}
+
+	// NNE policy injection. Per-encounter re-resolution: if the component already
+	// exists on the boss from a previous encounter, it re-runs its archetype
+	// selection at RegisterComponent's next BeginPlay tick... but that path only
+	// fires once. Instead we let the auto-injected fresh component run its resolve
+	// on this new install. For a pre-existing NNE component we leave it alone —
+	// same brain, same fight. (Post-MVP: add UNNEBossPolicyComponent::Resolve()
+	// public reruns when the profile changes materially between encounters.)
+	if (Settings->bEnableNNEBoss)
+	{
+		if (!Boss->FindComponentByClass<UNNEBossPolicyComponent>())
+		{
+			UNNEBossPolicyComponent* PolicyComp =
+				NewObject<UNNEBossPolicyComponent>(Boss, TEXT("NNEBossPolicyComponent"));
+			// Volume's fallback persona wins if the archetype cosine match fails
+			// (new / guest player). See ResolveModelData precedence in NNE header.
+			PolicyComp->SetPreferredPersonaOverride(Volume->PreferredPersonaFallback);
+			PolicyComp->RegisterComponent();
+		}
+	}
+
+	// Bind OnBossDied so the encounter volume knows to end. Multi-bind safe —
+	// AddUniqueDynamic short-circuits if already bound.
+	if (UBossActionComponent* BossAction = Boss->FindComponentByClass<UBossActionComponent>())
+	{
+		// Route through the subsystem's HandleBossDied for the RecordRoundEnd
+		// side effects (memory save, telemetry). The volume also binds its own
+		// listener for the end-encounter flow; both fire.
+		BossAction->OnBossDied.AddUniqueDynamic(this, &UGameFeelSubsystem::HandleBossDied);
+		BossAction->OnBossDied.AddUniqueDynamic(Volume, &ABossEncounterVolume::OnBossDefeated);
+	}
+
+	RoundStartRealSeconds = FPlatformTime::Seconds();
+	SetCameraMode(ECameraMode::Combat);
+
+	UE_LOG(LogTemp, Log, TEXT("GameFeelSubsystem::BeginEncounter: '%s' active (persona fallback='%s')."),
+		*Volume->EncounterID.ToString(),
+		*Volume->PreferredPersonaFallback.ToString());
+}
+
+void UGameFeelSubsystem::EndEncounter(ABossEncounterVolume* Volume)
+{
+	if (!Volume) return;
+	if (ActiveEncounter != Volume) return;  // ignore stale end-events
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		ActiveEncounter = nullptr;
+		return;
+	}
+
+	AActor* Boss = Volume->BossActor.Get();
+	if (Boss)
+	{
+		if (UBossActionComponent* BossAction = Boss->FindComponentByClass<UBossActionComponent>())
+		{
+			BossAction->OnBossDied.RemoveDynamic(Volume, &ABossEncounterVolume::OnBossDefeated);
+			// Leave the subsystem's HandleBossDied bound — RecordRoundEnd's
+			// debounce handles duplicate fires cleanly.
+		}
+		// Re-hide the boss if it survived (player retreated) so re-entry gets
+		// a clean state. If the boss is dead, its death sequence runs first;
+		// respawning is a Phase E save-state decision (defeated stays defeated).
+		Boss->SetActorHiddenInGame(true);
+		Boss->SetActorEnableCollision(false);
+	}
+
+	SetCameraMode(ECameraMode::Exploration);
+	ActiveEncounter = nullptr;
+
+	UE_LOG(LogTemp, Log, TEXT("GameFeelSubsystem::EndEncounter: '%s' released."),
+		*Volume->EncounterID.ToString());
+}
+
 void UGameFeelSubsystem::TryInstall()
 {
 	UWorld* World = GetWorld();
 	if (!World) return;
 
 	const UGameFeelSettings* Settings = GetDefault<UGameFeelSettings>();
+
+	// Tier 4: if this level uses encounter volumes, disable this subsystem's
+	// auto-injection of HUD/NNE/memory-load onto whichever boss it finds first.
+	// Those flows are owned per-encounter by ABossEncounterVolume so multiple
+	// biome bosses in the same level each get their own installation pass.
+	// Detected exactly once — checking every tick would iterate the world.
+	if (!bLevelInspected)
+	{
+		for (TActorIterator<ABossEncounterVolume> It(World); It; ++It)
+		{
+			bOverworldMode = true;
+			break;
+		}
+		bLevelInspected = true;
+		if (bOverworldMode)
+		{
+			UE_LOG(LogTemp, Log, TEXT("GameFeelSubsystem: overworld mode — encounter volumes own the boss-side install."));
+		}
+	}
 
 	if (Settings->bEnableCombatCamera && !bCameraInstalled)
 	{
@@ -100,8 +274,35 @@ void UGameFeelSubsystem::TryInstall()
 					NewObject<UCombatCameraComponent>(HeroPawn, TEXT("CombatCameraComponent"));
 				CameraComp->RegisterComponent();
 			}
+			// In overworld mode, default the hero to Exploration until an
+			// encounter volume promotes to Combat. In arena mode, leave the
+			// default Combat (no behavior change vs today).
+			if (bOverworldMode)
+			{
+				if (UCombatCameraComponent* CamComp = HeroPawn->FindComponentByClass<UCombatCameraComponent>())
+				{
+					CamComp->SetCameraMode(ECameraMode::Exploration);
+				}
+				if (ULockOnComponent* LockOn = HeroPawn->FindComponentByClass<ULockOnComponent>())
+				{
+					LockOn->SetActive(false);
+				}
+			}
 			bCameraInstalled = true;
 		}
+	}
+
+	// Overworld mode owns the boss-side install; the rest of this function is
+	// arena-only. Everything below runs against the FIRST boss found in the
+	// world, which is exactly wrong when there are five biome bosses.
+	if (bOverworldMode)
+	{
+		if (bCameraInstalled)
+		{
+			// Nothing left to poll for; the timer can stop.
+			World->GetTimerManager().ClearTimer(InstallTimerHandle);
+		}
+		return;
 	}
 
 	if (Settings->bEnableBossStatusHUD && !bHUDInstalled)
@@ -224,7 +425,19 @@ void UGameFeelSubsystem::RecordRoundEnd(bool bBossWon)
 	if (NowReal - LastRoundEndRealSeconds < 2.0) return;
 	LastRoundEndRealSeconds = NowReal;
 
-	AActor* Boss = FindBossActor(World);
+	// Tier 4: with multiple biome bosses in one level, FindBossActor's
+	// "first Enemy-tagged actor" rule would record the wrong boss's dossier when
+	// a non-active encounter's boss actor is discovered before the active one.
+	// Prefer the active encounter's boss; fall back to the arena-mode discovery.
+	AActor* Boss = nullptr;
+	if (ActiveEncounter)
+	{
+		Boss = ActiveEncounter->BossActor.Get();
+	}
+	if (!Boss)
+	{
+		Boss = FindBossActor(World);
+	}
 	if (!Boss) return;
 
 	// Training sessions never write local player memory: the bridge owns

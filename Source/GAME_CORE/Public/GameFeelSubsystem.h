@@ -44,6 +44,21 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Camera")
 	void SetCameraMode(ECameraMode NewMode);
 
+	/** Tier 4 overworld encounter start. Called from ABossEncounterVolume when the
+	 *  player enters. Unhides the volume's boss, ensures HUD + NNE components are
+	 *  installed, applies the volume's PreferredPersonaFallback to the NNE
+	 *  archetype resolver, binds OnBossDied to trigger EndEncounter, and switches
+	 *  the player's camera to Combat mode. Idempotent — a duplicate BeginEncounter
+	 *  for the same volume no-ops. */
+	void BeginEncounter(class ABossEncounterVolume* Volume);
+
+	/** Tier 4 overworld encounter end. Called from ABossEncounterVolume on boss
+	 *  death or when the player leaves the volume. Records + saves player memory
+	 *  (skipped under -rlbridge / while a Python TCP client is connected — same
+	 *  training-vs-shipping arbitration rule as elsewhere), re-hides the boss, and
+	 *  switches the camera back to Exploration mode. */
+	void EndEncounter(class ABossEncounterVolume* Volume);
+
 private:
 	/** Timer body: installs whatever is enabled and already spawnable; clears the
 	 *  timer once every enabled feature is installed. */
@@ -63,6 +78,21 @@ private:
 	UFUNCTION()
 	void HandleBossDied();
 	void RecordRoundEnd(bool bBossWon);
+
+	/** True when this level contains at least one ABossEncounterVolume. TryInstall
+	 *  detects this once and disables its own boss-side auto-injection (HUD, NNE,
+	 *  boss-death binding, memory load) — the encounter volumes own those flows
+	 *  and TryInstall would otherwise inject on the wrong actor. Set once at the
+	 *  first TryInstall call. */
+	bool bOverworldMode = false;
+
+	/** Guards the one-time overworld-volume scan in TryInstall so PIE re-runs
+	 *  redetect (per-subsystem member instead of function-local static). */
+	bool bLevelInspected = false;
+
+	/** Currently-active encounter (Tier 4). One at a time by design. */
+	UPROPERTY()
+	TObjectPtr<class ABossEncounterVolume> ActiveEncounter;
 
 	FTimerHandle InstallTimerHandle;
 	bool bCameraInstalled = false;

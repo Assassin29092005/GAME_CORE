@@ -140,6 +140,16 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "NNEBoss|Archetypes")
 	TObjectPtr<UArchetypeProfilesAsset> ArchetypeProfiles;
 
+	/** Tier 4 overworld: per-encounter biome-preferred persona set by
+	 *  ABossEncounterVolume via SetPreferredPersonaOverride *before* the component
+	 *  is registered. Consulted by ResolveModelData when the cosine match against
+	 *  PlayerMemoryComponent's stored profile fails (new / guest player, no
+	 *  encounter history) — biome intent wins over the "first bank entry" default,
+	 *  but the player's profile still outranks it when there IS a match. Empty =
+	 *  no override; behaves as pre-Tier-4. */
+	UFUNCTION(BlueprintCallable, Category = "NNEBoss|Archetypes")
+	void SetPreferredPersonaOverride(FName Persona) { PreferredPersonaOverride = Persona; }
+
 	/** True once the CPU model instance is created and shaped for [1,17]. */
 	UFUNCTION(BlueprintPure, Category = "NNEBoss")
 	bool IsPolicyReady() const { return ModelInstance.IsValid(); }
@@ -229,4 +239,8 @@ private:
 	bool bWarnedNoObsComp = false;
 	bool bWarnedBadObsSize = false;
 	bool bWarnedInferenceFailed = false;
+
+	/** Tier 4 encounter-set persona used by ResolveModelData when the profile
+	 *  cosine match fails. NAME_None = no override. */
+	FName PreferredPersonaOverride = NAME_None;
 };

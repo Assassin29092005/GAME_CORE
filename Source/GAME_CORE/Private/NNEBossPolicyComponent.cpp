@@ -422,6 +422,29 @@ UNNEModelData* UNNEBossPolicyComponent::ResolveModelData()
 		}
 	}
 
+	// 1.5) Tier 4 biome fallback: when the profile cosine match didn't return
+	//      (empty bank, zero encounters, or no candidate above threshold), let
+	//      the encounter volume's PreferredPersonaFallback pick from the bank.
+	//      Bio design contract: cosine match on a real player profile still
+	//      wins — this only fires for new / guest players in a biome where
+	//      the level author declared an intent.
+	if (!PreferredPersonaOverride.IsNone())
+	{
+		if (const TObjectPtr<UNNEModelData>* Found = ArchetypeBank.Find(PreferredPersonaOverride))
+		{
+			if (*Found)
+			{
+				SelectedArchetype = PreferredPersonaOverride;
+				SelectionSummary = FString::Printf(TEXT("archetype: %s (biome-preferred fallback)"),
+					*PreferredPersonaOverride.ToString());
+				UE_LOG(LogTemp, Display, TEXT("NNEBossPolicy: %s ('%s')."), *SelectionSummary, *(*Found)->GetName());
+				return *Found;
+			}
+		}
+		UE_LOG(LogTemp, Warning, TEXT("NNEBossPolicy: PreferredPersonaOverride '%s' has no model in ArchetypeBank — continuing to default."),
+			*PreferredPersonaOverride.ToString());
+	}
+
 	// 2) Explicit fallback model.
 	if (ModelData)
 	{
