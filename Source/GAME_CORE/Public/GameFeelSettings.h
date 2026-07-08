@@ -194,6 +194,32 @@ public:
 	UPROPERTY(EditAnywhere, Config, Category = "Camera|SpringArm")
 	FVector CameraTargetOffset = FVector(0.0f, 0.0f, 40.0f);
 
+	// --- Exploration camera (Tier 4 overworld) ---
+	// Overrides applied when UCombatCameraComponent::SetCameraMode(Exploration) is
+	// active. Interps toward these on entry and back to combat values on encounter
+	// (BossEncounterVolume overlap). Numbers picked to feel like an open-world
+	// third-person walk cam, not a tight combat over-the-shoulder.
+
+	/** Spring-arm length while exploring (cm). Longer than combat's TargetArmLength
+	 *  to widen the sightlines for navigation. */
+	UPROPERTY(EditAnywhere, Config, Category = "Camera|Exploration", meta = (ClampMin = "0.0"))
+	float ExplorationArmLength = 550.0f;
+
+	/** Base FOV while exploring. Slightly wider than combat BaseFOV to sell scale
+	 *  when standing on a plateau. */
+	UPROPERTY(EditAnywhere, Config, Category = "Camera|Exploration", meta = (ClampMin = "40.0", ClampMax = "130.0"))
+	float ExplorationFOV = 85.0f;
+
+	/** Spring-arm lag speed while exploring. Lower (looser) than combat so the
+	 *  camera drifts behind the pawn less snappily — reads as "not combat". */
+	UPROPERTY(EditAnywhere, Config, Category = "Camera|Exploration", meta = (ClampMin = "0.0"))
+	float ExplorationLagSpeed = 6.0f;
+
+	/** FInterpTo speed for the arm-length transition between Combat and Exploration
+	 *  modes. Same units as FOVInterpSpeed. */
+	UPROPERTY(EditAnywhere, Config, Category = "Camera|Exploration", meta = (ClampMin = "0.1"))
+	float ModeArmInterpSpeed = 3.0f;
+
 	// --- Telegraph indicator (GoW color language: red = move, yellow = parryable) ---
 
 	/** Unblockable/heavy telegraph. GoW Ragnarok red ring: #FF2A1A core. */

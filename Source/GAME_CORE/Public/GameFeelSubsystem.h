@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Subsystems/WorldSubsystem.h"
+#include "CombatCameraComponent.h"  // for ECameraMode
 #include "GameFeelSubsystem.generated.h"
 
 /**
@@ -31,6 +32,17 @@ public:
 	/** First Enemy-tagged actor with a UBossActionComponent, or nullptr. Shared
 	 *  boss-discovery rule for the camera and the HUD. */
 	static AActor* FindBossActor(UWorld* World);
+
+	/** Tier 4 overworld: switch the player's camera between Combat and
+	 *  Exploration behaviors. Combat mode is today's tight arm + soft framing +
+	 *  boss-close FOV widen; Exploration is a looser arm/FOV and LockOn deactivated.
+	 *
+	 *  Called from ABossEncounterVolume overlap (Combat on enter, Exploration on
+	 *  exit / boss death). Idempotent; smooth arm/FOV interp handled by
+	 *  UCombatCameraComponent. Silently no-ops if no player pawn or camera
+	 *  component exists (level with no player yet, or camera toggle disabled). */
+	UFUNCTION(BlueprintCallable, Category = "Camera")
+	void SetCameraMode(ECameraMode NewMode);
 
 private:
 	/** Timer body: installs whatever is enabled and already spawnable; clears the

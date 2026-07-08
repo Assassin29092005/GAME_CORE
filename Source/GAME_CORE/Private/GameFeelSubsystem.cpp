@@ -9,6 +9,7 @@
 #include "FirebaseAuthSubsystem.h"
 #include "GameFeelSettings.h"
 #include "Kismet/GameplayStatics.h"
+#include "LockOnComponent.h"
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
 #include "NNEBossPolicyComponent.h"
@@ -58,6 +59,28 @@ AActor* UGameFeelSubsystem::FindBossActor(UWorld* World)
 		}
 	}
 	return nullptr;
+}
+
+void UGameFeelSubsystem::SetCameraMode(ECameraMode NewMode)
+{
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	APawn* HeroPawn = UGameplayStatics::GetPlayerPawn(World, 0);
+	if (!HeroPawn) return;
+
+	if (UCombatCameraComponent* CameraComp = HeroPawn->FindComponentByClass<UCombatCameraComponent>())
+	{
+		CameraComp->SetCameraMode(NewMode);
+	}
+
+	// LockOn is a combat behavior; deactivate while exploring so the yaw doesn't
+	// snap toward far-away encounter-volume-adjacent minions the moment they
+	// enter LockOnRange. Re-activated on Combat mode.
+	if (ULockOnComponent* LockOn = HeroPawn->FindComponentByClass<ULockOnComponent>())
+	{
+		LockOn->SetActive(NewMode == ECameraMode::Combat);
+	}
 }
 
 void UGameFeelSubsystem::TryInstall()

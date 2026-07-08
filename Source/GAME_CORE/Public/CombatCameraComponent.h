@@ -10,6 +10,19 @@ class ULockOnComponent;
 class USpringArmComponent;
 class UBossActionComponent;
 
+/** Camera behavior mode (Tier 4 overworld). Combat = today's behavior
+ *  (tight arm, boss-close FOV widen, soft framing on). Exploration = looser
+ *  arm and FOV, no soft framing, no boss-close widen — for walking the
+ *  overworld outside encounter volumes. Switched at runtime by
+ *  UGameFeelSubsystem::SetCameraMode; smooth arm/FOV interp handles the
+ *  transition so entering/leaving an encounter volume doesn't snap. */
+UENUM(BlueprintType)
+enum class ECameraMode : uint8
+{
+	Combat      UMETA(DisplayName = "Combat"),
+	Exploration UMETA(DisplayName = "Exploration"),
+};
+
 /**
  * Combat camera for the hero (guide.md Phase 5). Self-installed at runtime by
  * UGameFeelSubsystem — no BP wiring, no edits to existing components.
@@ -45,6 +58,16 @@ public:
 	 */
 	static float ComputeLookInputMagnitude(const APlayerController* PC);
 
+	/** Runtime camera mode. Default Combat. Setting Exploration widens the arm and
+	 *  FOV to UGameFeelSettings::Exploration* targets, disables soft framing and
+	 *  boss-close FOV widen, and (through UGameFeelSubsystem::SetCameraMode)
+	 *  deactivates the LockOnComponent. Idempotent. */
+	UFUNCTION(BlueprintCallable, Category = "Camera")
+	void SetCameraMode(ECameraMode NewMode);
+
+	UFUNCTION(BlueprintPure, Category = "Camera")
+	ECameraMode GetCameraMode() const { return CurrentMode; }
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
@@ -76,4 +99,8 @@ private:
 
 	/** World seconds of the last non-zero look input (drives the recovery ramp). */
 	float LastLookInputTime = -1000.0f;
+
+	/** Active camera mode. Default Combat preserves BossArena behavior for
+	 *  clients that never call SetCameraMode. */
+	ECameraMode CurrentMode = ECameraMode::Combat;
 };
