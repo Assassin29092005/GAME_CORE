@@ -25,12 +25,16 @@ Cardinal orientation:
   - Numpy row 0 → NORTH; row H-1 → SOUTH
   - PNG rendered "N up" (top edge = north)
 
-Biome layout (matches the D&D-style reference overworld image):
+Biome layout (matches the D&D-style reference overworld image AND the world-
+space bounds documented in Tools/build_overworld_biomes.py — keep both in
+sync; U=0 west/U=1 east, V=0 north/V=1 south, +Y=North in world space):
   - Castle plateau: center, circular, moat around rim
-  - Marsh: W band, mid-latitude, channel-noise carving
-  - Desert: NE quadrant, gentle dunes
-  - Mountains: SW corner, sharp ridges via 1 - |fbm|
-  - Plains: fallback, fills whatever is not covered
+  - Marsh: W band, mid-latitude, channel-noise carving + lake wells
+  - Desert: NE quadrant, dune-ripple pattern
+  - Mountains: SW corner, sharp ridges via 1 - |fbm|, tallest biome,
+    peak-clustered so summits stand out instead of one flat plateau
+  - Plains: fallback, fills whatever is not covered, gentle village-mound
+    bumps scattered through the east side
 """
 from __future__ import annotations
 import os, math, time
@@ -74,6 +78,35 @@ def _smoothstep(e0, e1, x):
     t = np.clip((x - e0) / (e1 - e0 + 1e-8), 0.0, 1.0)
     return t*t*(3.0 - 2.0*t)
 
+def _band(x, lo, hi, soft):
+    """1.0 inside [lo, hi], soft falloff of width `soft` outside either edge."""
+    rise = _smoothstep(lo - soft, lo, x)
+    fall = 1.0 - _smoothstep(hi, hi + soft, x)
+    return np.clip(rise * fall, 0.0, 1.0)
+
+def _shift(a, dr, dc):
+    """Roll with edge-replicate (zero-flux) boundary instead of wraparound."""
+    out = np.roll(a, shift=(dr, dc), axis=(0, 1))
+    if dr == 1:  out[0, :]  = a[0, :]
+    elif dr == -1: out[-1, :] = a[-1, :]
+    if dc == 1:  out[:, 0]  = a[:, 0]
+    elif dc == -1: out[:, -1] = a[:, -1]
+    return out
+
+def _thermal_erode(h, iterations=24, talus=0.0035, transfer=0.5):
+    """Cheap vectorized talus-angle relaxation — approximates hydraulic/thermal
+    erosion (mass-conserving material transfer to steepest lower neighbor)
+    without a full particle-based sim. Softens noise into believable slopes,
+    ridgelines and valley floors."""
+    h = h.copy()
+    for _ in range(iterations):
+        for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            neighbor = _shift(h, dr, dc)
+            flow = np.clip(h - neighbor - talus, 0.0, None) * transfer * 0.25
+            gain = _shift(flow, -dr, -dc)
+            h = h - flow + gain
+    return h
+
 # ─── Terrain generation ────────────────────────────────────────────────────
 def build_terrain():
     u = np.linspace(0.0, 1.0, W, dtype=np.float32)
@@ -81,44 +114,83 @@ def build_terrain():
     U, V = np.meshgrid(u, v, indexing="xy")
 
     r_center = np.hypot(U - 0.5, V - 0.5)
-    mask_castle = 1.0 - _smoothstep(0.14, 0.22, r_center)
-    mask_moat   = _smoothstep(0.155, 0.185, r_center) \
-                * (1.0 - _smoothstep(0.185, 0.22, r_center))
+    mask_castle = 1.0 - _smoothstep(0.16, 0.24, r_center)
+    mask_moat   = _smoothstep(0.175, 0.205, r_center) \
+                * (1.0 - _smoothstep(0.205, 0.24, r_center))
 
-    mask_marsh  = _smoothstep(0.52, 0.25, U) \
-                * _smoothstep(0.10, 0.32, V) \
-                * _smoothstep(0.82, 0.58, V)
-
-    mask_desert = _smoothstep(0.42, 0.65, U) \
-                * _smoothstep(0.60, 0.35, V)
-
-    mask_mtn_peak = _smoothstep(0.30, 0.15, U) * _smoothstep(0.65, 0.82, V)
-    mask_mtn_foot = _smoothstep(0.42, 0.22, U) * _smoothstep(0.55, 0.76, V) * 0.5
+    # NOTE: these region shapes MUST mirror Tools/build_overworld_biomes.py's
+    # world-space bounds (its docstring states them in UU) — that script's
+    # dressing pass reads the SAME u,v convention. Do not "correct" these to
+    # plain cardinal bands without updating build_overworld_biomes.py too, or
+    # dressing props end up on the wrong biome's terrain.
+    #   Marsh:      W band            (build_overworld_biomes.py: x in [-100k,-25k])
+    #   Desert:     NE quadrant        (x in [+25k,+100k], y in [+20k,+100k], +Y=North)
+    #   Mountains:  SW corner          (x in [-100k,-30k], y in [-100k,-35k])
+    mask_marsh      = _band(U, 0.0, 0.32, 0.10) * _band(V, 0.22, 0.78, 0.14)
+    mask_desert     = _smoothstep(0.42, 0.65, U) * _smoothstep(0.60, 0.35, V)
+    mask_mtn_peak   = _smoothstep(0.30, 0.15, U) * _smoothstep(0.65, 0.82, V)
+    mask_mtn_foot   = _smoothstep(0.42, 0.22, U) * _smoothstep(0.55, 0.76, V) * 0.5
 
     others = np.clip(mask_castle + mask_marsh + mask_desert
                      + mask_mtn_peak + mask_mtn_foot, 0.0, 1.0)
     mask_plains = 1.0 - others
 
-    noise_fine  = _fbm((H, W), octaves=6, base_sigma=48,  persistence=0.5,  seed_offset=100)
-    noise_med   = _fbm((H, W), octaves=4, base_sigma=180, persistence=0.55, seed_offset=200)
-    noise_ridge = 1.0 - np.abs(_fbm((H, W), octaves=5, base_sigma=90,  persistence=0.55, seed_offset=300))
-    noise_marsh = _fbm((H, W), octaves=6, base_sigma=32,  persistence=0.6,  seed_offset=400)
+    noise_fine  = _fbm((H, W), octaves=6, base_sigma=40,  persistence=0.5,  seed_offset=100)
+    noise_med   = _fbm((H, W), octaves=4, base_sigma=160, persistence=0.55, seed_offset=200)
+    noise_ridge = 1.0 - np.abs(_fbm((H, W), octaves=6, base_sigma=42,  persistence=0.6,  seed_offset=300))
+    noise_marsh = _fbm((H, W), octaves=6, base_sigma=30,  persistence=0.6,  seed_offset=400)
     noise_plaza = _fbm((H, W), octaves=4, base_sigma=20,  persistence=0.4,  seed_offset=500)
+    noise_dune  = _fbm((H, W), octaves=3, base_sigma=90,  persistence=0.5,  seed_offset=600)
+    # Coarse low-frequency field that clusters where the tallest summits are
+    # allowed to rise — without it, ridged noise stays uniformly high across
+    # the whole mountain band and the range reads as one flat plateau instead
+    # of individual peaks with valleys between them.
+    peak_cluster = _fbm((H, W), octaves=3, base_sigma=220, persistence=0.6, seed_offset=700)
+    peak_cluster = np.clip(peak_cluster * 0.5 + 0.5, 0.0, 1.0)
 
-    height = np.full((H, W), 0.38, dtype=np.float32)
-    height += mask_castle * 0.22
-    height -= mask_moat   * 0.10
-    height += mask_mtn_peak * (0.34 + noise_ridge * 0.22)
-    height += mask_mtn_foot * (0.08 + noise_med * 0.06)
-    height -= mask_marsh    * (0.10 + np.clip(noise_marsh, 0, 1) * 0.06)
-    height += mask_desert   * (0.04 + noise_med * 0.03)
-    height += mask_plains   * (0.07 + noise_med * 0.05)
-    height += noise_fine * 0.018
+    # Stylized dune ripples: low-frequency sine warped by noise, banded to
+    # the desert mask only.
+    dune_ripple = np.sin((U * 26.0 + noise_dune * 3.0) * math.pi) * 0.5 + 0.5
 
-    plateau_core = 1.0 - _smoothstep(0.075, 0.11, r_center)
-    plaza_h = 0.38 + 0.22 + noise_plaza * 0.005
+    # Base plains height, well below mountains, above marsh.
+    height = np.full((H, W), 0.42, dtype=np.float32)
+    height += mask_castle   * 0.18
+    height -= mask_moat     * 0.09
+    height += mask_mtn_peak * (0.10 + noise_ridge * 0.34 * (0.45 + 0.55 * peak_cluster))
+    height += mask_mtn_foot * (0.10 + noise_med * 0.08)
+    height -= mask_marsh    * (0.20 + np.clip(noise_marsh, 0, 1) * 0.10)
+    height += mask_desert   * (0.06 + dune_ripple * 0.05 + noise_med * 0.02)
+    height += mask_plains   * (0.03 + noise_med * 0.04)
+    height += noise_fine * 0.02
+
+    # Two marsh lake wells — real low bowls, not just a shallow band dip.
+    for lx, ly, radius, depth in ((0.10, 0.42, 0.09, 0.16), (0.20, 0.62, 0.07, 0.12)):
+        r = np.hypot(U - lx, V - ly)
+        height -= (1.0 - _smoothstep(radius * 0.5, radius, r)) * depth
+
+    # A handful of low village mounds scattered across the plains band —
+    # subtle, just enough to read as settlement rises, not hills.
+    for vx, vy, radius, amount in (
+        (0.62, 0.46, 0.045, 0.035), (0.74, 0.58, 0.04, 0.03),
+        (0.68, 0.70, 0.045, 0.035), (0.85, 0.50, 0.04, 0.03),
+    ):
+        r = np.hypot(U - vx, V - vy)
+        height += (1.0 - _smoothstep(radius * 0.6, radius, r)) * amount * mask_plains
+
+    plateau_core = 1.0 - _smoothstep(0.085, 0.12, r_center)
+    plaza_h = 0.42 + 0.18 + noise_plaza * 0.005
     height = np.where(plateau_core > 0.5, plaza_h, height)
     height = np.clip(height, 0.0, 1.0)
+
+    height = _thermal_erode(height, iterations=24, talus=0.0035, transfer=0.5)
+    # Re-stamp the plaza flat AFTER erosion — erosion softens plateau rim
+    # into a natural talus slope, but the plaza floor itself must stay flat.
+    height = np.where(plateau_core > 0.5, plaza_h, height)
+    height = np.clip(height, 0.0, 1.0)
+
+    print(f"[overworld-heightmap] height range after erosion: "
+          f"[{height.min():.3f}, {height.max():.3f}] mean={height.mean():.3f} "
+          f"plaza={plaza_h.mean():.3f}")
 
     mask_mtn_combined = np.clip(mask_mtn_peak + mask_mtn_foot, 0.0, 1.0)
     biomes = {"Castle": mask_castle, "Marsh": mask_marsh, "Desert": mask_desert,

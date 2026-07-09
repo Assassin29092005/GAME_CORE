@@ -22,11 +22,17 @@ MAP_PATH = "/Game/Maps/Overworld"
 LABEL_PREFIX = "REGION_"
 PLAYER_START_LABEL = "OVERWORLD_PlayerStart"
 
-# Castle plateau roughly centered at world origin. Z=3500 is safe: high enough
-# above plateau top (~+3000 UU) that spawn doesn't punch through collision, low
-# enough that the fall onto plateau is < 1 s (fun-feel + no glitch potential).
-PLAYER_START_LOCATION = unreal.Vector(0.0, 0.0, 3500.0)
+# Fallback only — used if the floor trace at (0,0) misses (landscape not
+# imported yet). When the trace hits, step 1 places the PlayerStart at
+# plateau_z + PLAYER_START_DROP_HEIGHT instead of this fixed guess. Hardcoding
+# a Z assumes a specific heightmap's plateau height; heightmaps get
+# regenerated (different amplitude/erosion tuning) and that number goes stale.
+PLAYER_START_LOCATION_FALLBACK = unreal.Vector(0.0, 0.0, 3500.0)
 PLAYER_START_ROTATION = unreal.Rotator(0.0, 0.0, 0.0)
+# Height above the traced plateau surface to drop the hero from — enough
+# clearance to never spawn inside collision, short enough the fall reads as
+# a beat, not a glitch.
+PLAYER_START_DROP_HEIGHT = 500.0
 
 # Line-trace start height for the snap-to-floor pass. 100 km above origin is
 # safely above the tallest possible mountain peak.
@@ -95,11 +101,19 @@ def _actor_subsystem():
 #    at the safe location above castle plateau.
 # ---------------------------------------------------------------------------
 
-@_step("1. PlayerStart placed at (0, 0, 3500)")
+@_step("1. PlayerStart placed above traced plateau surface")
 def step_1_player_start():
     _require_overworld()
     world = _get_world()
     subsys = _actor_subsystem()
+
+    plateau_z = _trace_down(world, (0.0, 0.0))
+    if plateau_z is not None:
+        location = unreal.Vector(0.0, 0.0, plateau_z + PLAYER_START_DROP_HEIGHT)
+        note = "traced plateau Z=%.1f" % plateau_z
+    else:
+        location = PLAYER_START_LOCATION_FALLBACK
+        note = "trace missed — using fallback (landscape not imported yet?)"
 
     # Sweep any existing PlayerStart. We want ONE, in a known good spot.
     existing = unreal.GameplayStatics.get_all_actors_of_class(world, unreal.PlayerStart)
@@ -107,11 +121,11 @@ def step_1_player_start():
         subsys.destroy_actor(a)
 
     actor = subsys.spawn_actor_from_class(
-        unreal.PlayerStart, PLAYER_START_LOCATION, PLAYER_START_ROTATION)
+        unreal.PlayerStart, location, PLAYER_START_ROTATION)
     if actor is None:
         raise StepSkip("spawn_actor_from_class returned None")
     actor.set_actor_label(PLAYER_START_LABEL)
-    return "removed %d prior, spawned 1 at %s" % (len(existing), PLAYER_START_LOCATION)
+    return "removed %d prior, spawned 1 at %s (%s)" % (len(existing), location, note)
 
 
 # ---------------------------------------------------------------------------
@@ -175,8 +189,17 @@ def step_2_snap_to_floor():
         if hit_z is None:
             missed += 1
             continue
+        # Kit-bashed dressing meshes vary in pivot placement (base vs. center).
+        # Snapping the raw actor pivot to hit_z buries any mesh whose pivot
+        # isn't at its base (e.g. wall/roof panels with a center pivot) while
+        # base-pivoted meshes (e.g. pillars) look fine — the "only pillars,
+        # no complete buildings" symptom. Snap the mesh's bounding-box BOTTOM
+        # to the floor instead, so every pivot style lands correctly.
+        origin, extent = a.get_actor_bounds(False)
+        bbox_bottom_z = origin.z - extent.z
+        delta_z = (hit_z + SNAP_OFFSET_Z) - bbox_bottom_z
         a.set_actor_location(
-            unreal.Vector(loc.x, loc.y, hit_z + SNAP_OFFSET_Z),
+            unreal.Vector(loc.x, loc.y, loc.z + delta_z),
             False,  # bSweep
             False,  # bTeleport
         )
