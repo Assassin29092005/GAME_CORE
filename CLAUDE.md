@@ -274,6 +274,11 @@ Enabled plugins (in `.uproject`): Mover (+ MoverExamples, MoverIntegrations), Mo
 - `Tools/setup_retargeters.py` — programmatically creates the IK Rigs + IK Retargeters that `batch_retarget_anims.py` consumes (auto-chain / fuzzy bone mapping); headless-preferred.
 - `Tools/wire_new_animations.py` — end-to-end wiring of retargeted sequences: builds montages, notify windows, CombatAnimConfigs, and wires hero/boss/minion BPs; folder-contract-coupled to `setup_retargeters.py`.
 - Arena beautification pipeline (all headless, level-guarded, idempotent, additive; each owns an actor-label family): `Tools/dress_arena.py` (508 `ARENA_DRESS_*` actors, optional `DO_NANITE`), `Tools/upgrade_terrain_material.py` (M_Terrain v2), `Tools/scatter_ground_cover.py` (`ARENA_AAA_GC_*` HISM cover), `Tools/cinematic_pass.py` (`ARENA_AAA_*` sky/clouds/grade), `Tools/ambient_particles.py` (`ARENA_AAA_FX_*` ash motes; `DO_SNOWFALL` flag). `Tools/build_beauty_meshes.py` runs under **Blender** (not UE) and produces the floor-ring/backdrop FBXs.
+- `Tools/apply_showcase_bossarena.py` — one-shot minimalist pass (`SHOWCASE_MODE=on|off`). Hides all `ARENA_DRESS_*` via `bIsHiddenInGame` (non-destructive), spawns four cardinal obsidian monoliths (`ARENA_SHOWCASE_*`), swaps `ARENA_PostProcess` to a crushed-blacks / gold-rim / tight-vignette palette (baseline snapshotted to `Saved/ShowcaseBackup/postprocess_baseline.json` for faithful revert). Pairs with `UGameFeelSettings::bEnableRLShowcase` — see `Docs/BOSSARENA_SHOWCASE.md`.
+
+### RL-visibility HUD
+
+`UGameFeelSettings::bEnableRLShowcase` (default off; runtime `arena.Showcase 1/0`) layers four Slate panels over the existing `SBossStatusWidget` — brain badge (`UNNEBossPolicyComponent::GetSelectedArchetype` + `GetSelectionConfidence`), action-mask row (`UBossActionComponent::GetLegalActionMask` + last chosen action), 8-dim player-profile radar (live from `UPlayerProfileComponent::GetProfile`), and a taunt fade fed by `UBossExplainabilityComponent::OnBossInsightGenerated`. All read-only reflections of live components; the panels tolerate any peer missing (empty panel, no combat side effect). See `Docs/BOSSARENA_SHOWCASE.md`.
 
 ## Architecture Diagrams
 
