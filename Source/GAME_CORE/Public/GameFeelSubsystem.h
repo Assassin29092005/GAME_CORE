@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Subsystems/WorldSubsystem.h"
+#include "CombatCameraComponent.h"  // for ECameraMode
 #include "GameFeelSubsystem.generated.h"
 
 /**
@@ -32,6 +33,47 @@ public:
 	 *  boss-discovery rule for the camera and the HUD. */
 	static AActor* FindBossActor(UWorld* World);
 
+	/** Tier 4 overworld: switch the player's camera between Combat and
+	 *  Exploration behaviors. Combat mode is today's tight arm + soft framing +
+	 *  boss-close FOV widen; Exploration is a looser arm/FOV and LockOn deactivated.
+	 *
+	 *  Called from ABossEncounterVolume overlap (Combat on enter, Exploration on
+	 *  exit / boss death). Idempotent; smooth arm/FOV interp handled by
+	 *  UCombatCameraComponent. Silently no-ops if no player pawn or camera
+	 *  component exists (level with no player yet, or camera toggle disabled). */
+	UFUNCTION(BlueprintCallable, Category = "Camera")
+	void SetCameraMode(ECameraMode NewMode);
+
+	/** Tier 4 overworld encounter start. Called from ABossEncounterVolume when the
+	 *  player enters. Unhides the volume's boss, ensures HUD + NNE components are
+	 *  installed, applies the volume's PreferredPersonaFallback to the NNE
+	 *  archetype resolver, binds OnBossDied to trigger EndEncounter, and switches
+	 *  the player's camera to Combat mode. Idempotent — a duplicate BeginEncounter
+	 *  for the same volume no-ops. */
+	void BeginEncounter(class ABossEncounterVolume* Volume);
+
+	/** Tier 4 overworld encounter end. Called from ABossEncounterVolume on boss
+	 *  death or when the player leaves the volume. Records + saves player memory
+	 *  (skipped under -rlbridge / while a Python TCP client is connected — same
+	 *  training-vs-shipping arbitration rule as elsewhere), re-hides the boss, and
+	 *  switches the camera back to Exploration mode. */
+	void EndEncounter(class ABossEncounterVolume* Volume);
+
+	/** True if this session has cleared the given encounter zone (loaded from
+	 *  UOverworldSaveGame). Consulted by ABossEncounterVolume::BeginPlay so a
+	 *  cleared zone doesn't re-trigger on revisit. */
+	bool IsEncounterDefeated(FName EncounterID) const;
+
+	/** PlayerId currently used for the overworld save slot (Firebase UID or
+	 *  'guest'). Empty if never resolved. Exposed for the dev console
+	 *  command `overworld.ResetSave`. */
+	const FString& GetOverworldPlayerId() const { return CachedPlayerId; }
+
+	/** Drop the in-memory OverworldSave + cached PlayerId. The next
+	 *  LoadOverworldSave call will re-resolve identity + re-read disk.
+	 *  Used by `overworld.ResetSave` between playtest runs. */
+	void ClearOverworldState();
+
 private:
 	/** Timer body: installs whatever is enabled and already spawnable; clears the
 	 *  timer once every enabled feature is installed. */
@@ -51,6 +93,36 @@ private:
 	UFUNCTION()
 	void HandleBossDied();
 	void RecordRoundEnd(bool bBossWon);
+
+	/** True when this level contains at least one ABossEncounterVolume. TryInstall
+	 *  detects this once and disables its own boss-side auto-injection (HUD, NNE,
+	 *  boss-death binding, memory load) — the encounter volumes own those flows
+	 *  and TryInstall would otherwise inject on the wrong actor. Set once at the
+	 *  first TryInstall call. */
+	bool bOverworldMode = false;
+
+	/** Guards the one-time overworld-volume scan in TryInstall so PIE re-runs
+	 *  redetect (per-subsystem member instead of function-local static). */
+	bool bLevelInspected = false;
+
+	/** Loaded once at overworld level begin: player pos/rot restore + set of
+	 *  defeated encounters. Written back on every encounter end and on world
+	 *  teardown. Null in arena mode. */
+	UPROPERTY()
+	TObjectPtr<class UOverworldSaveGame> OverworldSave;
+
+	/** PlayerId used for the current save slot. Cached from BeginEncounter's
+	 *  memory-load step so save calls don't re-resolve Firebase auth. */
+	FString CachedPlayerId;
+
+	/** Load/save helpers (overworld mode only). */
+	void LoadOverworldSave();
+	void SaveOverworldSave();
+	void EnsurePlayerIdCached();
+
+	/** Currently-active encounter (Tier 4). One at a time by design. */
+	UPROPERTY()
+	TObjectPtr<class ABossEncounterVolume> ActiveEncounter;
 
 	FTimerHandle InstallTimerHandle;
 	bool bCameraInstalled = false;

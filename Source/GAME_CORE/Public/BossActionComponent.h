@@ -200,6 +200,12 @@ public:
 	UFUNCTION(BlueprintPure, Category = "BossAction")
 	bool IsDead() const { return bIsDead; }
 
+	/** Current committed action (EBossAction::Count when idle). Exposed for the
+	 *  RL-visibility showcase HUD (bEnableRLShowcase); reading is const-cheap and
+	 *  read-only, no combat side effect. */
+	UFUNCTION(BlueprintPure, Category = "BossAction")
+	EBossAction GetCurrentAction() const { return CurrentAction; }
+
 	// --- Locomotion state for ABP_Boss state machine ---
 
 	/** True while a movement command (Approach/Retreat) is actively driving input. Use for idle ↔ locomotion transition. */

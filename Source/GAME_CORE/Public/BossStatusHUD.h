@@ -3,11 +3,47 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "Widgets/SLeafWidget.h"
+#include "BossExplainabilityComponent.h"   // FBossInsight, used by HandleBossInsight UFUNCTION signature
 #include "BossStatusHUD.generated.h"
 
 class UBossActionComponent;
 class UCombatComponent;
 class UHitReactionComponent;
+class UNNEBossPolicyComponent;
+class UPlayerProfileComponent;
+class UBossExplainabilityComponent;
+// FBossInsight comes from BossExplainabilityComponent.h (included above).
+
+/**
+ * RL-visibility sub-block populated by UBossStatusHUDComponent when
+ * UGameFeelSettings::bEnableRLShowcase is true. All fields are read-only
+ * reflections of live components — the HUD never mutates them.
+ */
+struct FBossHUDRLState
+{
+	// Brain badge — which NNE persona resolved from cosine match, and the cosine.
+	FName Persona = NAME_None;
+	float PersonaConfidence = 0.0f;       // cosine in [-1, 1]
+
+	// Action mask row — 5 booleans in EBossAction order [Attack, Block, Dodge,
+	// Approach, Retreat]. Populated even when NNE is unset (falls back to
+	// UBossActionComponent::GetLegalActionMask()). Sized to 5 at fill; the paint
+	// side is defensive against other sizes.
+	TArray<bool> LegalMask;
+
+	// Last chosen action (0..4) or -1 when unknown.
+	int32 ChosenAction = -1;
+
+	// Live 8-dim player profile radar (FPlayerProfile::ToFloatArray order).
+	TArray<float> PlayerProfile;
+
+	// Most recent taunt fired by UBossExplainabilityComponent::OnBossInsightGenerated.
+	// TauntAgeSeconds counts up each paint; TauntDurationSeconds is the target hold
+	// (fade starts at half-life). Empty text disables the taunt panel.
+	FText TauntText;
+	float TauntAgeSeconds = 999.0f;
+	float TauntDurationSeconds = 4.0f;
+};
 
 /**
  * Paint-state shared between UBossStatusHUDComponent (game thread, writes every
@@ -44,6 +80,12 @@ struct FBossHUDState
 
 	// Monotonic time for paint-side pulses (stagger-full flash etc.).
 	float TimeSeconds = 0.0f;
+
+	// RL-visibility panels — only painted when bShowRL is true. The HUD component
+	// flips bShowRL from UGameFeelSettings::bEnableRLShowcase each tick, so the
+	// runtime `arena.Showcase 1/0` console command takes effect on the next paint.
+	bool bShowRL = false;
+	FBossHUDRLState RL;
 };
 
 /**
@@ -81,6 +123,14 @@ public:
 private:
 	int32 PaintBossBars(const FGeometry& AllottedGeometry, FSlateWindowElementList& OutDrawElements, int32 LayerId) const;
 	int32 PaintTelegraph(const FGeometry& AllottedGeometry, FSlateWindowElementList& OutDrawElements, int32 LayerId) const;
+
+	// RL-visibility overlays, only walked when state->bShowRL. Each returns the
+	// next layer to draw on top of (matches Slate's LayerId convention).
+	int32 PaintRLShowcase(const FGeometry& AllottedGeometry, FSlateWindowElementList& OutDrawElements, int32 LayerId) const;
+	int32 PaintBrainBadge(const FGeometry& AllottedGeometry, FSlateWindowElementList& OutDrawElements, int32 LayerId) const;
+	int32 PaintActionMask(const FGeometry& AllottedGeometry, FSlateWindowElementList& OutDrawElements, int32 LayerId) const;
+	int32 PaintProfileRadar(const FGeometry& AllottedGeometry, FSlateWindowElementList& OutDrawElements, int32 LayerId) const;
+	int32 PaintTauntFade(const FGeometry& AllottedGeometry, FSlateWindowElementList& OutDrawElements, int32 LayerId) const;
 
 	/** Axis-aligned filled rect via the CoreStyle white brush + tint. */
 	static void DrawRect(const FGeometry& Geometry, FSlateWindowElementList& OutDrawElements,
@@ -145,6 +195,12 @@ public:
 	UFUNCTION()
 	void HandleBossDied();
 
+	/** UBossExplainabilityComponent::OnBossInsightGenerated → stashes the taunt text
+	 *  in the shared state and resets the fade-in age. Only bound when
+	 *  bEnableRLShowcase is true (otherwise the taunt panel isn't painted anyway). */
+	UFUNCTION()
+	void HandleBossInsight(const FBossInsight& Insight);
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -162,6 +218,11 @@ private:
 	void UpdateTelegraph(float DeltaTime);
 	void UpdateOpacity(float DeltaTime);
 
+	/** Refresh the RL sub-state each tick when UGameFeelSettings::bEnableRLShowcase
+	 *  is set. Reads NNE persona / cosine confidence, boss action mask + last
+	 *  chosen action, hero player profile 8-dim, and ages the taunt fade counter. */
+	void UpdateRLState(float DeltaTime);
+
 	TSharedPtr<FBossHUDState> State;
 	TSharedPtr<SBossStatusWidget> Widget;
 	bool bWidgetOnViewport = false;
@@ -171,12 +232,22 @@ private:
 	TWeakObjectPtr<UHitReactionComponent> BossHitReaction;
 	TWeakObjectPtr<UBossActionComponent> BossAction;
 
+	// RL-visibility peers, resolved lazily (weak; project convention).
+	TWeakObjectPtr<UNNEBossPolicyComponent> BossNNE;
+	TWeakObjectPtr<UBossExplainabilityComponent> BossExplain;
+
 	// Hero side, re-resolved lazily.
 	TWeakObjectPtr<UCombatComponent> HeroCombat;
+	TWeakObjectPtr<UPlayerProfileComponent> HeroProfile;
 
 	float LastHealthFraction = 1.0f;
 	float ChipHoldRemaining = 0.0f;
 	float BorderFlashRemaining = 0.0f;
 	float TelegraphRemaining = 0.0f;
 	float TelegraphDuration = 0.0f;
+
+	// Guards HandleBossInsight binding — we only bind when RL showcase is on so a
+	// shipping build doesn't consume the delegate list on the explainability
+	// component. TryBindHero-style lazy resolve pattern.
+	bool bInsightBound = false;
 };

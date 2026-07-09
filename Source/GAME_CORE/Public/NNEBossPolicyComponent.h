@@ -140,6 +140,16 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "NNEBoss|Archetypes")
 	TObjectPtr<UArchetypeProfilesAsset> ArchetypeProfiles;
 
+	/** Tier 4 overworld: per-encounter biome-preferred persona set by
+	 *  ABossEncounterVolume via SetPreferredPersonaOverride *before* the component
+	 *  is registered. Consulted by ResolveModelData when the cosine match against
+	 *  PlayerMemoryComponent's stored profile fails (new / guest player, no
+	 *  encounter history) — biome intent wins over the "first bank entry" default,
+	 *  but the player's profile still outranks it when there IS a match. Empty =
+	 *  no override; behaves as pre-Tier-4. */
+	UFUNCTION(BlueprintCallable, Category = "NNEBoss|Archetypes")
+	void SetPreferredPersonaOverride(FName Persona) { PreferredPersonaOverride = Persona; }
+
 	/** True once the CPU model instance is created and shaped for [1,17]. */
 	UFUNCTION(BlueprintPure, Category = "NNEBoss")
 	bool IsPolicyReady() const { return ModelInstance.IsValid(); }
@@ -147,6 +157,24 @@ public:
 	/** Which bank entry BeginPlay selected (NAME_None = ModelData fallback). */
 	UFUNCTION(BlueprintPure, Category = "NNEBoss")
 	FName GetSelectedArchetype() const { return SelectedArchetype; }
+
+	/** Cosine similarity in [-1,1] of the winning archetype match against the
+	 *  player's stored PlayerMemoryComponent profile. Filled during BeginPlay by
+	 *  ResolveModelData; stays 0 when no cosine match ran (bank empty / no
+	 *  profile). Read-only surface for the RL-visibility showcase HUD. */
+	UFUNCTION(BlueprintPure, Category = "NNEBoss")
+	float GetSelectionConfidence() const { return SelectionConfidence; }
+
+	/** Last inference's 5 raw logits, in EBossAction order [Attack,Block,Dodge,
+	 *  Approach,Retreat]. Illegal actions carry -FLT_MAX (matches MaskablePPO).
+	 *  Empty until the first DecisionTick after IsPolicyReady() turns true.
+	 *  Read-only reflection — never modify from outside. */
+	const TArray<float>& GetLastLogits() const { return OutputBuffer; }
+
+	/** Last chosen action from argmax over the masked logits. EBossAction::Count
+	 *  until the first decision. */
+	UFUNCTION(BlueprintPure, Category = "NNEBoss")
+	int32 GetLastChosenAction() const { return LastChosenAction; }
 
 	/** One zeros-obs inference; logs the 5 logits + argmax (+ masked argmax when the
 	 *  BossActionComponent is reachable). Returns false if no model could run.
@@ -215,6 +243,15 @@ private:
 	// "archetype: turtle (cos=0.87)" — surfaced in the ready log.
 	FString SelectionSummary;
 
+	// Cosine confidence of the winning match, saved for the showcase HUD.
+	// Filled by ResolveModelData when a cosine match runs; stays 0 otherwise.
+	float SelectionConfidence = 0.0f;
+
+	// Argmax over the last masked logits — kept for showcase HUD; DecisionTick
+	// writes it right before ExecuteAction. int32 not EBossAction to avoid a
+	// forward-decl chain in the header.
+	int32 LastChosenAction = -1;
+
 	// Peer components, cached in BeginPlay (FindComponentByClass — no hard refs,
 	// project convention).
 	TWeakObjectPtr<UBossActionComponent> BossAction;
@@ -229,4 +266,8 @@ private:
 	bool bWarnedNoObsComp = false;
 	bool bWarnedBadObsSize = false;
 	bool bWarnedInferenceFailed = false;
+
+	/** Tier 4 encounter-set persona used by ResolveModelData when the profile
+	 *  cosine match fails. NAME_None = no override. */
+	FName PreferredPersonaOverride = NAME_None;
 };

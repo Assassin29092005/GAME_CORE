@@ -126,6 +126,13 @@ float UCombatCameraComponent::ComputeYieldFactor(const APlayerController* PC)
 	return (1.0f - LookMagnitude) * RecoveryAlpha;
 }
 
+void UCombatCameraComponent::SetCameraMode(ECameraMode NewMode)
+{
+	// Idempotent: same mode twice is a no-op. Actual transition happens
+	// smoothly in TickComponent via arm/FOV FInterpTo.
+	CurrentMode = NewMode;
+}
+
 void UCombatCameraComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
@@ -144,8 +151,36 @@ void UCombatCameraComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 		BossDistance = FVector::Dist(Owner->GetActorLocation(), BossActor->GetActorLocation());
 	}
 
+	// Mode-driven arm/lag interp. Only owned by us when bApplyCameraDefaults is
+	// on (the "we manage the SpringArm" opt-in). If BP-authored, we leave the
+	// SpringArm alone in either mode — the ExplorationFOV still applies, but
+	// arm/lag stay the BP's responsibility.
+	if (SpringArm)
+	{
+		const UGameFeelSettings* Settings = GetDefault<UGameFeelSettings>();
+		if (Settings->bApplyCameraDefaults)
+		{
+			const float TargetArm = (CurrentMode == ECameraMode::Exploration)
+				? Settings->ExplorationArmLength
+				: Settings->TargetArmLength;
+			SpringArm->TargetArmLength = FMath::FInterpTo(
+				SpringArm->TargetArmLength, TargetArm, DeltaTime, Settings->ModeArmInterpSpeed);
+
+			const float TargetLag = (CurrentMode == ECameraMode::Exploration)
+				? Settings->ExplorationLagSpeed
+				: Settings->CameraLagSpeed;
+			SpringArm->CameraLagSpeed = FMath::FInterpTo(
+				SpringArm->CameraLagSpeed, TargetLag, DeltaTime, Settings->ModeArmInterpSpeed);
+		}
+	}
+
 	UpdateFOV(DeltaTime, BossDistance, bBossAlive);
-	UpdateSoftFraming(DeltaTime, BossDistance, bBossAlive);
+	// Soft framing is a combat-only behavior (drift toward the boss). While
+	// exploring the world, the player's stick / mouse is the sole rotation source.
+	if (CurrentMode == ECameraMode::Combat)
+	{
+		UpdateSoftFraming(DeltaTime, BossDistance, bBossAlive);
+	}
 }
 
 void UCombatCameraComponent::UpdateFOV(float DeltaTime, float BossDistance, bool bBossAlive)
@@ -155,10 +190,13 @@ void UCombatCameraComponent::UpdateFOV(float DeltaTime, float BossDistance, bool
 	const UGameFeelSettings* Settings = GetDefault<UGameFeelSettings>();
 
 	// One FInterpTo handles every FOV source: compute the max requested FOV per
-	// frame (guide 5.2 step 5). Today the only extra source is the boss-close
-	// widen; a future sprint boost just raises TargetFOV here.
-	float TargetFOV = Settings->BaseFOV;
-	if (bBossAlive && BossDistance < Settings->BossCloseWidenDistance)
+	// frame (guide 5.2 step 5). In Combat mode the extra source is boss-close
+	// widen; a future sprint boost just raises TargetFOV here. In Exploration
+	// mode the base FOV is wider and the boss-close widen is suppressed.
+	float TargetFOV = (CurrentMode == ECameraMode::Exploration)
+		? Settings->ExplorationFOV
+		: Settings->BaseFOV;
+	if (CurrentMode == ECameraMode::Combat && bBossAlive && BossDistance < Settings->BossCloseWidenDistance)
 	{
 		const float Alpha = 1.0f - FMath::Clamp(BossDistance / Settings->BossCloseWidenDistance, 0.0f, 1.0f);
 		TargetFOV = FMath::Max(TargetFOV, Settings->BaseFOV + Settings->BossCloseFOVBoost * Alpha);

@@ -102,7 +102,7 @@ export default function World() {
 
         <div className="threat-block">
           <div className="stamp" style={{ marginBottom: 14 }}>
-            One mind · many fighters
+            One mind · many encounters
           </div>
           <div className="threat-grade num">{dominance}%</div>
           <div className="threat-label">

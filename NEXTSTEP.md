@@ -1,17 +1,30 @@
-# NEXTSTEP.md — Path to Ship (rewritten 2026-07-05, post ship-path wave)
+# NEXTSTEP.md — Path to Ship (rewritten 2026-07-05, post ship-path wave; updated 2026-07-09)
 
-> **State (2026-07-06):** M0–M4 done (map at its AAA pass: terrain v2, 24.5k ground cover,
-> clouds/grade, floor ring + mountain backdrop; minions golem-bodied; feel layer + audio
-> placeholders live). **M5 LIVE end-to-end**: real brains in-engine (turtle 110k = default,
-> rusher 41k banked, kiter staged pending re-train), settings-driven archetype bank with
-> measured centroids + mean-centered cosine, and the shipped-path memory lifecycle
-> (GameFeelSubsystem load/record/save) that makes profile-matched selection actually run
-> outside training. **M6 game-side code done** (login/telemetry/taunts/community difficulty —
-> needs your Firebase keys). **M7 pages built** (taunts + World; needs deploy). **M8 cook
-> smoke PASS.** Remaining: more training data (kiter/counter/chaotic), your shortlist below,
-> Firebase go-live, M2 locomotion/tuning, real staged packaging.
+> **State (2026-07-09):** ALL code components built. Remaining work is (a) training data
+> (kiter/counter/chaotic overnight runs) and (b) human-only clicks (Part 0). M0–M4 done
+> (map at its AAA pass: terrain v2, 24.5k ground cover, clouds/grade, floor ring +
+> mountain backdrop; minions golem-bodied; feel layer + audio placeholders live).
+> **M5 LIVE end-to-end**: real brains in-engine (turtle 110k = default, rusher 41k banked,
+> kiter staged pending re-train), settings-driven archetype bank with measured centroids +
+> mean-centered cosine, and the shipped-path memory lifecycle (GameFeelSubsystem
+> load/record/save) that makes profile-matched selection actually run outside training.
+> **M6 game-side code done** (login/telemetry/taunts/community difficulty — needs your
+> Firebase keys). **M7 pages built** (taunts + World; needs deploy). **M8 cook smoke PASS.**
+>
+> **BossArena SHOWCASE (2026-07-09):** non-destructive minimalist + RL-visibility HUD
+> landed (`Tools/apply_showcase_bossarena.py` + `bEnableRLShowcase` flag + 4 Slate panels:
+> brain badge, action-mask row, 8-dim player-profile radar, taunt fade). Toggleable via
+> Project Settings or `arena.Showcase 1/0`. Original arena look preserved when off.
+> See `Docs/BOSSARENA_SHOWCASE.md`.
+>
+> **Overworld Tier 4 PAUSED (2026-07-09):** heightmap regenerated with real erosion +
+> biome shaping + peak clustering (see memory `overworld-tier4-inflight.md`). Remaining
+> Phase D dressing forks + encounter volume BP wiring + perf pass deferred until after
+> release. Do NOT resume until M8 ships.
+>
 > Deep detail: [ROADMAP.md](ROADMAP.md) · [guide.md](guide.md) · [visuals.md](visuals.md) ·
-> [Website/README.md](Website/README.md) (the Firestore schema contract).
+> [Website/README.md](Website/README.md) (the Firestore schema contract) ·
+> [Docs/BOSSARENA_SHOWCASE.md](Docs/BOSSARENA_SHOWCASE.md).
 
 ---
 
@@ -25,7 +38,8 @@
 | 4 | **Exposure re-meter** | Viewport → Show → Visualize → HDR (Eye Adaptation) → note settled EV100 in-arena → `ARENA_PostProcess` → Exposure Min/Max = that ±0.5. (Atmosphere changed twice since your last tune; the sky reads dark until this.) | 3 min |
 | 5 | **Firebase go-live** | console.firebase.google.com → Add project → Authentication → Email/Password ON → Firestore create (production). Then paste **Web API Key + Project ID** into: `Config/DefaultGame.ini` under `[/Script/GAME_CORE.FirebaseAuthSubsystem]` (keys `WebApiKey=`, `ProjectId=`) **and** the web config object into `Website/src/firebase.js`. Deploy: `cd Website && npm run build && firebase deploy` (first time: `npm i -g firebase-tools; firebase login; firebase init hosting`, public dir `dist`, SPA yes). Push `Website/firestore.rules` via `firebase deploy --only firestore:rules`. | 30 min |
 | 6 | **PIE verification session** | Checklist in Part 2 — the human eye pass nothing headless can replace. | 20 min |
-| 7 | *(release day)* itch.io upload + link in `Website/src/pages/Download.jsx` | ROADMAP M8 | 20 min |
+| 7 | **BossArena showcase apply + screenshot** | Editor Cmd `py "D:/GAME_CORE 5.8/Tools/apply_showcase_bossarena.py"` (defaults SHOWCASE_MODE=on). Then Project Settings → Game → Game Feel → Enable RL Showcase = on (or PIE + `arena.Showcase 1`). PIE, verify 4 panels + minimalist arena. Screenshot for paper Fig 1 / promo header. Revert: `py import os; os.environ['SHOWCASE_MODE']='off'; exec(open(r'D:/GAME_CORE 5.8/Tools/apply_showcase_bossarena.py').read())`. See `Docs/BOSSARENA_SHOWCASE.md`. | 10 min |
+| 8 | *(release day)* itch.io upload + link in `Website/src/pages/Download.jsx` | ROADMAP M8 | 20 min |
 
 ## PART 1 — TONIGHT, EVERY NIGHT: training (everything downstream waits on this)
 
@@ -56,6 +70,12 @@ powershell -ExecutionPolicy Bypass -File Tools\run_training.ps1 -Persona rusher 
       grain/fringe off. Optional Nanite pass: flip `DO_NANITE=True` in
       `Tools/dress_arena.py`, re-run headlessly.
 - [ ] `combat.DebugHUD 1` — buffer/cancel/commitment lines sane in a real exchange
+- [ ] `arena.Showcase 1` — RL panels appear (brain badge top-left, mask row top-right,
+      profile radar bottom-left, taunt fade center-right); combat behavior unchanged.
+      `arena.Showcase 0` cleanly reverts.
+- [ ] `WBP_HealthBars` — long-standing runtime warning spam when boss actor is None. Add
+      `IsValid(BossActor)` guard around `GetPercent_0`'s read, return 0.0 on false. Editor
+      Blueprint fix only, 3 minutes.
 
 ## PART 3 — PROMOTE THE FIRST REAL BRAIN (after 1+ overnight runs)
 
@@ -101,19 +121,33 @@ The per-persona promotion flow (current, post-archetype-bank — Claude does 1�
 
 ## PART 4 — REMAINING DEV WORK (Claude-drivable, ask or /loop it)
 
-- **M2 locomotion** (guide.md Phase 2): motion-matching spike (Game Animation Sample —
-  the one Fab pack still not added) or blendspace Option B. The last big feel gap.
-- **Tuning loops** (guide.md Phase 8): one variable → two fights → keep/revert.
-  Everything lives in Project Settings → Game → Game Feel + the data assets.
-- **M8 packaging**: Project Settings → Packaging → Shipping; maps list (BossArena +
-  future menu); Platforms → Windows → Package. Test on a UE-less machine per ROADMAP M8.
-  **Cook smoke PASSED (2026-07-06):** headless `BuildCookRun -cook` — 3872/3872 packages,
-  zero errors, BUILD SUCCESSFUL (~7 min; UE 5.8 cooks into the Zen store, so Saved/Cooked
-  staying near-empty is normal — don't chase that). Still to verify at real packaging:
-  NNM_* assets present in the staged pak (the DirectoriesToAlwaysCook insurance), maps
-  list, Shipping config.
-- Upgrades queued behind taste: better whoosh/grunt audio (Sonniss/Freesound), grass MIC
-  tints (grass/fern param names failed — stock green for now), MetaHuman skins (post-M2).
+**Priority order (2026-07-09 — all code is in; this is finishing work):**
+
+1. **Training data — the one thing that gates real archetype variety.** Overnight runs
+   for `kiter` (re-run: the 6k attempt evals dodge-only), `counter`, `chaotic`. Each
+   promotes per Part 3 flow (export → eval gate → import → `+NNEArchetypeBank` row →
+   `boss.NNESelfTest`). Rotate nightly via `Tools/run_training.ps1`.
+2. **M2 locomotion** (guide.md Phase 2): motion-matching spike (Game Animation Sample —
+   the one Fab pack still not added) or blendspace Option B. The last big feel gap.
+3. **Tuning loops** (guide.md Phase 8): one variable → two fights → keep/revert.
+   Everything lives in Project Settings → Game → Game Feel + the data assets.
+4. **M8 packaging**: Project Settings → Packaging → Shipping; maps list (BossArena +
+   future menu); Platforms → Windows → Package. Test on a UE-less machine per ROADMAP M8.
+   **Cook smoke PASSED (2026-07-06):** headless `BuildCookRun -cook` — 3872/3872 packages,
+   zero errors, BUILD SUCCESSFUL (~7 min; UE 5.8 cooks into the Zen store, so Saved/Cooked
+   staying near-empty is normal — don't chase that). Still to verify at real packaging:
+   NNM_* assets present in the staged pak (the DirectoriesToAlwaysCook insurance), maps
+   list, Shipping config.
+5. **Paper figure work (unblocked by BossArena showcase)** — capture Fig 1 (RL brain
+   panels over minimalist arena), Fig 2 (four persona brains on the same fight snapshot),
+   Fig 3 (player-profile radar evolution across a fight). Screenshot flow lives in
+   `Docs/BOSSARENA_SHOWCASE.md`.
+6. Upgrades queued behind taste: better whoosh/grunt audio (Sonniss/Freesound), grass MIC
+   tints (grass/fern param names failed — stock green for now), MetaHuman skins (post-M2).
+
+**Deferred (do NOT resume until release):**
+- Overworld Tier 4 — heightmap regenerated 2026-07-09 but Phase D dressing + encounter
+  wiring is ~3 weeks. Ships-first-then-open-world discipline.
 
 ## PART 5 — THE /loop PROMPT (autonomous completion)
 
