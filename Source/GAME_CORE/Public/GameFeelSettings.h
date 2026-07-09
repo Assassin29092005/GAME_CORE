@@ -115,6 +115,14 @@ public:
 	UPROPERTY(EditAnywhere, Config, Category = "Toggles")
 	bool bApplyCameraDefaults = true;
 
+	/** Overlay the RL-visibility HUD (brain badge, action-mask row, live 8-dim
+	 *  player-profile radar, insight-taunt fade). Turns the shipped BossStatusHUD
+	 *  into a "how the boss brain sees you" showcase. Read-only reflection of the
+	 *  existing components — never modifies combat. Off in shipping (default);
+	 *  console `arena.Showcase 1` flips it live. Requires bEnableBossStatusHUD. */
+	UPROPERTY(EditAnywhere, Config, Category = "Toggles")
+	bool bEnableRLShowcase = false;
+
 	// --- Lock-on / soft framing ---
 
 	/** RInterpTo speed while hard-locked (guide 5.2: 6.0, tune 5-8). LockOnComponent

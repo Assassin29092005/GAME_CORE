@@ -404,6 +404,7 @@ UNNEModelData* UNNEBossPolicyComponent::ResolveModelData()
 							if (*Found)
 							{
 								SelectedArchetype = Best;
+								SelectionConfidence = BestCos;
 								SelectionSummary = FString::Printf(TEXT("archetype: %s (cos=%.2f)"), *Best.ToString(), BestCos);
 								UE_LOG(LogTemp, Display, TEXT("NNEBossPolicy: %s — matched stored player profile (%d encounters, centroids: %s, model '%s')."),
 									*SelectionSummary, Memory->GetTotalEncounters(), CentroidSource, *(*Found)->GetName());
@@ -555,6 +556,7 @@ void UNNEBossPolicyComponent::DecisionTick()
 	// Same entry point the bridge uses — Phase 4 gates (commitment, hysteresis,
 	// recovery, reacting) all apply downstream; ExecuteAction also refreshes the
 	// bridge watchdog, which parks the scripted fallback brain while NNE drives.
+	LastChosenAction = BestIdx;
 	Action->ExecuteAction(BestIdx);
 }
 

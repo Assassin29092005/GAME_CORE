@@ -10,6 +10,7 @@
 #include "EngineUtils.h"
 #include "FirebaseAuthSubsystem.h"
 #include "GameFeelSettings.h"
+#include "HAL/IConsoleManager.h"
 #include "Kismet/GameplayStatics.h"
 #include "LockOnComponent.h"
 #include "Misc/CommandLine.h"
@@ -21,6 +22,26 @@
 #include "PlayerProfileComponent.h"
 #include "RLBridgeComponent.h"
 #include "TimerManager.h"
+
+namespace
+{
+	// `arena.Showcase 1|0` — flip UGameFeelSettings::bEnableRLShowcase at runtime.
+	// UBossStatusHUDComponent reads the flag each tick (see UpdateRLState), so the
+	// panels appear/disappear on the next paint. Persists to DefaultGame.ini so
+	// the setting survives editor restarts (SaveConfig on the CDO).
+	static FAutoConsoleCommand GCmdArenaShowcase(
+		TEXT("arena.Showcase"),
+		TEXT("1 = enable RL-visibility HUD (brain, mask, profile radar, taunt); 0 = shipping HUD."),
+		FConsoleCommandWithArgsDelegate::CreateStatic([](const TArray<FString>& Args)
+		{
+			UGameFeelSettings* Settings = GetMutableDefault<UGameFeelSettings>();
+			if (!Settings) return;
+			const bool bTarget = Args.Num() > 0 ? (Args[0].TrimStartAndEnd().ToBool() || Args[0] == TEXT("1")) : !Settings->bEnableRLShowcase;
+			Settings->bEnableRLShowcase = bTarget;
+			Settings->SaveConfig();
+			UE_LOG(LogTemp, Display, TEXT("arena.Showcase = %s"), bTarget ? TEXT("on") : TEXT("off"));
+		}));
+}
 
 bool UGameFeelSubsystem::ShouldCreateSubsystem(UObject* Outer) const
 {

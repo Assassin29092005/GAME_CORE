@@ -2,6 +2,7 @@
 
 #include "Blueprint/WidgetLayoutLibrary.h"
 #include "BossActionComponent.h"
+#include "BossExplainabilityComponent.h"
 #include "CombatComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
@@ -11,8 +12,20 @@
 #include "GameFramework/PlayerController.h"
 #include "HitReactionComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "NNEBossPolicyComponent.h"
+#include "PlayerProfileComponent.h"
 #include "Rendering/DrawElements.h"
 #include "Styling/CoreStyle.h"
+
+namespace
+{
+	// EBossAction display labels for the mask row.
+	static const TCHAR* kActionShortLabels[5] = { TEXT("ATK"), TEXT("BLK"), TEXT("DGE"), TEXT("APP"), TEXT("RET") };
+	static const TCHAR* kProfileDimLabels[8] = {
+		TEXT("Agg"), TEXT("Dge"), TEXT("Blk"), TEXT("Opn"),
+		TEXT("Prs"), TEXT("Kit"), TEXT("Cmb"), TEXT("Pos"),
+	};
+}
 
 // =====================================================================
 // SBossStatusWidget
@@ -83,6 +96,10 @@ int32 SBossStatusWidget::OnPaint(const FPaintArgs& Args, const FGeometry& Allott
 
 	int32 MaxLayer = PaintBossBars(AllottedGeometry, OutDrawElements, LayerId);
 	MaxLayer = PaintTelegraph(AllottedGeometry, OutDrawElements, MaxLayer + 1);
+	if (State->bShowRL)
+	{
+		MaxLayer = PaintRLShowcase(AllottedGeometry, OutDrawElements, MaxLayer + 1);
+	}
 	return MaxLayer;
 }
 
@@ -241,6 +258,232 @@ int32 SBossStatusWidget::PaintTelegraph(const FGeometry& AllottedGeometry,
 	return LayerId + 1;
 }
 
+// ---------------------------------------------------------------------
+// RL-visibility panels (only walked when state->bShowRL). Each panel is
+// independent — one draws in a corner and returns; the caller collects the
+// max LayerId across them. Every panel reads only from FBossHUDRLState.
+// ---------------------------------------------------------------------
+
+int32 SBossStatusWidget::PaintRLShowcase(const FGeometry& AllottedGeometry,
+	FSlateWindowElementList& OutDrawElements, int32 LayerId) const
+{
+	int32 MaxLayer = PaintBrainBadge(AllottedGeometry, OutDrawElements, LayerId);
+	MaxLayer = FMath::Max(MaxLayer, PaintActionMask(AllottedGeometry, OutDrawElements, LayerId));
+	MaxLayer = FMath::Max(MaxLayer, PaintProfileRadar(AllottedGeometry, OutDrawElements, LayerId));
+	MaxLayer = FMath::Max(MaxLayer, PaintTauntFade(AllottedGeometry, OutDrawElements, LayerId));
+	return MaxLayer;
+}
+
+int32 SBossStatusWidget::PaintBrainBadge(const FGeometry& AllottedGeometry,
+	FSlateWindowElementList& OutDrawElements, int32 LayerId) const
+{
+	const FVector2D Size = AllottedGeometry.GetLocalSize();
+	const FVector2D Origin(24.0f, 24.0f);
+	const FVector2D BadgeSize(230.0f, 56.0f);
+	const float Opacity = State->WidgetOpacity;
+	if (Opacity <= KINDA_SMALL_NUMBER) return LayerId;
+
+	DrawRect(AllottedGeometry, OutDrawElements, LayerId,
+		Origin, BadgeSize,
+		FLinearColor(0.02f, 0.02f, 0.025f, 0.62f * Opacity));
+
+	const FString PersonaStr = State->RL.Persona.IsNone()
+		? FString(TEXT("<default>"))
+		: State->RL.Persona.ToString().ToUpper();
+	const FString HeaderStr = FString::Printf(TEXT("BRAIN  %s"), *PersonaStr);
+	const FString ConfStr = FString::Printf(TEXT("match  %.2f"), State->RL.PersonaConfidence);
+
+	const FSlateFontInfo HeaderFont = FCoreStyle::GetDefaultFontStyle("Bold", 14);
+	const FSlateFontInfo BodyFont   = FCoreStyle::GetDefaultFontStyle("Regular", 12);
+
+	FSlateDrawElement::MakeText(
+		OutDrawElements, LayerId + 1,
+		AllottedGeometry.ToPaintGeometry(FVector2f(BadgeSize), FSlateLayoutTransform(FVector2f(Origin + FVector2D(12.0f, 6.0f)))),
+		FText::FromString(HeaderStr), HeaderFont, ESlateDrawEffect::None,
+		FLinearColor(1.0f, 0.86f, 0.42f, Opacity));   // gold
+	FSlateDrawElement::MakeText(
+		OutDrawElements, LayerId + 1,
+		AllottedGeometry.ToPaintGeometry(FVector2f(BadgeSize), FSlateLayoutTransform(FVector2f(Origin + FVector2D(12.0f, 28.0f)))),
+		FText::FromString(ConfStr), BodyFont, ESlateDrawEffect::None,
+		FLinearColor(0.85f, 0.85f, 0.90f, Opacity));
+
+	// Confidence bar bottom edge (0..1 in [-1,1]/2+0.5 mapping)
+	const float Norm = FMath::Clamp(0.5f + 0.5f * State->RL.PersonaConfidence, 0.0f, 1.0f);
+	DrawRect(AllottedGeometry, OutDrawElements, LayerId + 1,
+		Origin + FVector2D(0.0f, BadgeSize.Y - 3.0f), FVector2D(BadgeSize.X * Norm, 3.0f),
+		FLinearColor(1.0f, 0.72f, 0.20f, Opacity));
+
+	return LayerId + 2;
+}
+
+int32 SBossStatusWidget::PaintActionMask(const FGeometry& AllottedGeometry,
+	FSlateWindowElementList& OutDrawElements, int32 LayerId) const
+{
+	const FVector2D Size = AllottedGeometry.GetLocalSize();
+	const float Opacity = State->WidgetOpacity;
+	if (Opacity <= KINDA_SMALL_NUMBER) return LayerId;
+
+	constexpr float CellW = 60.0f;
+	constexpr float CellH = 30.0f;
+	constexpr float Gap   = 6.0f;
+	const int32 N = FMath::Min<int32>(State->RL.LegalMask.Num(), 5);
+
+	const float TotalW = N * CellW + FMath::Max(0, N - 1) * Gap;
+	const FVector2D Origin(Size.X - TotalW - 24.0f, 24.0f);
+
+	const FSlateFontInfo CellFont = FCoreStyle::GetDefaultFontStyle("Bold", 12);
+	const TSharedRef<FSlateFontMeasure> FontMeasure = FSlateApplication::Get().GetRenderer()->GetFontMeasureService();
+
+	for (int32 i = 0; i < N; ++i)
+	{
+		const bool bLegal = State->RL.LegalMask[i];
+		const bool bChosen = (State->RL.ChosenAction == i);
+		const FVector2D CellPos(Origin.X + i * (CellW + Gap), Origin.Y);
+		const FLinearColor Fill = bLegal
+			? (bChosen ? FLinearColor(1.0f, 0.72f, 0.20f, 0.85f * Opacity)      // gold — chosen
+			           : FLinearColor(0.08f, 0.09f, 0.12f, 0.75f * Opacity))    // dark — legal
+			:               FLinearColor(0.02f, 0.02f, 0.025f, 0.5f * Opacity); // faded — masked
+		DrawRect(AllottedGeometry, OutDrawElements, LayerId, CellPos, FVector2D(CellW, CellH), Fill);
+		// Top edge highlight when chosen
+		if (bChosen)
+		{
+			DrawRect(AllottedGeometry, OutDrawElements, LayerId + 1,
+				CellPos, FVector2D(CellW, 2.0f),
+				FLinearColor(1.0f, 0.95f, 0.75f, Opacity));
+		}
+		const FText Label = FText::FromString(kActionShortLabels[i]);
+		const FVector2D LabelSize = FontMeasure->Measure(Label, CellFont);
+		const FVector2D LabelPos(CellPos.X + (CellW - LabelSize.X) * 0.5f, CellPos.Y + (CellH - LabelSize.Y) * 0.5f);
+		FSlateDrawElement::MakeText(
+			OutDrawElements, LayerId + 2,
+			AllottedGeometry.ToPaintGeometry(FVector2f(LabelSize), FSlateLayoutTransform(FVector2f(LabelPos))),
+			Label, CellFont, ESlateDrawEffect::None,
+			bLegal ? FLinearColor(0.95f, 0.95f, 0.95f, Opacity)
+			       : FLinearColor(0.45f, 0.45f, 0.48f, Opacity));
+	}
+	return LayerId + 2;
+}
+
+int32 SBossStatusWidget::PaintProfileRadar(const FGeometry& AllottedGeometry,
+	FSlateWindowElementList& OutDrawElements, int32 LayerId) const
+{
+	const FVector2D Size = AllottedGeometry.GetLocalSize();
+	const float Opacity = State->WidgetOpacity;
+	if (Opacity <= KINDA_SMALL_NUMBER) return LayerId;
+
+	const int32 N = FMath::Min<int32>(State->RL.PlayerProfile.Num(), 8);
+	if (N <= 2) return LayerId;
+
+	constexpr float Radius = 76.0f;
+	const FVector2D Center(24.0f + Radius, Size.Y - 24.0f - Radius);
+
+	// Background disk + gridlines (3 concentric rings at 0.33 / 0.66 / 1.0).
+	for (float Frac : { 1.0f, 0.66f, 0.33f })
+	{
+		DrawRing(AllottedGeometry, OutDrawElements, LayerId,
+			Center, Radius * Frac, 1.0f,
+			FLinearColor(0.4f, 0.4f, 0.45f, 0.35f * Opacity));
+	}
+
+	// Spoke lines
+	for (int32 i = 0; i < N; ++i)
+	{
+		const float Angle = 2.0f * PI * i / N - PI * 0.5f;
+		TArray<FVector2f> Spoke;
+		Spoke.Reserve(2);
+		Spoke.Add(FVector2f(Center.X, Center.Y));
+		Spoke.Add(FVector2f(Center.X + Radius * FMath::Cos(Angle),
+		                    Center.Y + Radius * FMath::Sin(Angle)));
+		FSlateDrawElement::MakeLines(
+			OutDrawElements, LayerId,
+			AllottedGeometry.ToPaintGeometry(),
+			Spoke, ESlateDrawEffect::None,
+			FLinearColor(0.4f, 0.4f, 0.45f, 0.3f * Opacity),
+			true, 1.0f);
+	}
+
+	// Filled profile polygon (values live in [0,1]; 0.5 = neutral).
+	TArray<FVector2f> Poly;
+	Poly.Reserve(N + 1);
+	for (int32 i = 0; i < N; ++i)
+	{
+		const float V = FMath::Clamp(State->RL.PlayerProfile[i], 0.0f, 1.0f);
+		const float Angle = 2.0f * PI * i / N - PI * 0.5f;
+		Poly.Add(FVector2f(Center.X + Radius * V * FMath::Cos(Angle),
+		                   Center.Y + Radius * V * FMath::Sin(Angle)));
+	}
+	Poly.Add(Poly[0]);
+	FSlateDrawElement::MakeLines(
+		OutDrawElements, LayerId + 1,
+		AllottedGeometry.ToPaintGeometry(),
+		Poly, ESlateDrawEffect::None,
+		FLinearColor(1.0f, 0.72f, 0.20f, 0.95f * Opacity), true, 2.0f);
+
+	// Dim labels around the rim
+	const FSlateFontInfo LabelFont = FCoreStyle::GetDefaultFontStyle("Regular", 10);
+	const TSharedRef<FSlateFontMeasure> FontMeasure = FSlateApplication::Get().GetRenderer()->GetFontMeasureService();
+	for (int32 i = 0; i < N; ++i)
+	{
+		const FText Label = FText::FromString(kProfileDimLabels[i]);
+		const FVector2D LabelSize = FontMeasure->Measure(Label, LabelFont);
+		const float Angle = 2.0f * PI * i / N - PI * 0.5f;
+		const FVector2D LabelPos(
+			Center.X + (Radius + 10.0f) * FMath::Cos(Angle) - LabelSize.X * 0.5f,
+			Center.Y + (Radius + 10.0f) * FMath::Sin(Angle) - LabelSize.Y * 0.5f);
+		FSlateDrawElement::MakeText(
+			OutDrawElements, LayerId + 2,
+			AllottedGeometry.ToPaintGeometry(FVector2f(LabelSize), FSlateLayoutTransform(FVector2f(LabelPos))),
+			Label, LabelFont, ESlateDrawEffect::None,
+			FLinearColor(0.75f, 0.75f, 0.80f, 0.9f * Opacity));
+	}
+
+	// Header text above the radar
+	const FSlateFontInfo HeaderFont = FCoreStyle::GetDefaultFontStyle("Bold", 12);
+	const FText Header = FText::FromString(TEXT("PLAYER PROFILE"));
+	FSlateDrawElement::MakeText(
+		OutDrawElements, LayerId + 2,
+		AllottedGeometry.ToPaintGeometry(FVector2f(120.0f, 16.0f), FSlateLayoutTransform(FVector2f(FVector2D(Center.X - 60.0f, Center.Y - Radius - 26.0f)))),
+		Header, HeaderFont, ESlateDrawEffect::None,
+		FLinearColor(1.0f, 0.86f, 0.42f, Opacity));
+
+	return LayerId + 2;
+}
+
+int32 SBossStatusWidget::PaintTauntFade(const FGeometry& AllottedGeometry,
+	FSlateWindowElementList& OutDrawElements, int32 LayerId) const
+{
+	if (State->RL.TauntText.IsEmpty()) return LayerId;
+	if (State->RL.TauntDurationSeconds <= 0.0f) return LayerId;
+	const float t = FMath::Clamp(State->RL.TauntAgeSeconds / State->RL.TauntDurationSeconds, 0.0f, 1.0f);
+	if (t >= 1.0f) return LayerId;
+
+	// Ease: fade-in over first 0.15, hold, fade-out over last 0.35.
+	float Alpha = 1.0f;
+	if (t < 0.15f) Alpha = t / 0.15f;
+	else if (t > 0.65f) Alpha = 1.0f - (t - 0.65f) / 0.35f;
+	Alpha = FMath::Clamp(Alpha, 0.0f, 1.0f) * State->WidgetOpacity;
+	if (Alpha <= KINDA_SMALL_NUMBER) return LayerId;
+
+	const FVector2D Size = AllottedGeometry.GetLocalSize();
+	const FSlateFontInfo Font = FCoreStyle::GetDefaultFontStyle("Italic", 20);
+	const TSharedRef<FSlateFontMeasure> FontMeasure = FSlateApplication::Get().GetRenderer()->GetFontMeasureService();
+	const FVector2D TextSize = FontMeasure->Measure(State->RL.TauntText, Font);
+	const FVector2D Pos(Size.X - TextSize.X - 32.0f, Size.Y * 0.5f - TextSize.Y * 0.5f);
+
+	// Shadow pass
+	FSlateDrawElement::MakeText(
+		OutDrawElements, LayerId,
+		AllottedGeometry.ToPaintGeometry(FVector2f(TextSize), FSlateLayoutTransform(FVector2f(Pos + FVector2D(1.5f, 2.0f)))),
+		State->RL.TauntText, Font, ESlateDrawEffect::None,
+		FLinearColor(0.0f, 0.0f, 0.0f, 0.6f * Alpha));
+	FSlateDrawElement::MakeText(
+		OutDrawElements, LayerId + 1,
+		AllottedGeometry.ToPaintGeometry(FVector2f(TextSize), FSlateLayoutTransform(FVector2f(Pos))),
+		State->RL.TauntText, Font, ESlateDrawEffect::None,
+		FLinearColor(1.0f, 0.86f, 0.42f, Alpha));
+	return LayerId + 1;
+}
+
 // =====================================================================
 // UBossStatusHUDComponent
 // =====================================================================
@@ -262,6 +505,11 @@ void UBossStatusHUDComponent::BeginPlay()
 	BossCombat = Owner->FindComponentByClass<UCombatComponent>();
 	BossHitReaction = Owner->FindComponentByClass<UHitReactionComponent>();
 	BossAction = Owner->FindComponentByClass<UBossActionComponent>();
+
+	// RL-visibility peers — resolved even when showcase is off so a runtime
+	// arena.Showcase toggle works without having to unregister/reregister.
+	BossNNE = Owner->FindComponentByClass<UNNEBossPolicyComponent>();
+	BossExplain = Owner->FindComponentByClass<UBossExplainabilityComponent>();
 
 	State = MakeShared<FBossHUDState>();
 	State->BossName = BossDisplayName;
@@ -297,6 +545,10 @@ void UBossStatusHUDComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	if (HeroCombat.IsValid())
 	{
 		HeroCombat->OnAttackLanded.RemoveDynamic(this, &UBossStatusHUDComponent::HandleHeroAttackLanded);
+	}
+	if (bInsightBound && BossExplain.IsValid())
+	{
+		BossExplain->OnBossInsightGenerated.RemoveDynamic(this, &UBossStatusHUDComponent::HandleBossInsight);
 	}
 	RemoveWidgetFromViewport();
 
@@ -418,6 +670,7 @@ void UBossStatusHUDComponent::TickComponent(float DeltaTime, ELevelTick TickType
 	UpdateBars(RealDeltaTime);
 	UpdateTelegraph(DeltaTime);
 	UpdateOpacity(RealDeltaTime);
+	UpdateRLState(RealDeltaTime);
 }
 
 void UBossStatusHUDComponent::UpdateBars(float DeltaTime)
@@ -523,4 +776,96 @@ void UBossStatusHUDComponent::UpdateOpacity(float DeltaTime)
 	const bool bBossDead = BossCombat.IsValid() ? BossCombat->IsDead() : false;
 	const float Target = bBossDead ? 0.0f : 1.0f;
 	State->WidgetOpacity = FMath::FInterpTo(State->WidgetOpacity, Target, DeltaTime, 3.0f);
+}
+
+void UBossStatusHUDComponent::UpdateRLState(float DeltaTime)
+{
+	// Cheap read-only mirror — no combat state mutated. Toggle-live: reading the
+	// Config bool each tick lets `arena.Showcase 1/0` take effect immediately
+	// without unregistering the component.
+	const UGameFeelSettings* Settings = GetDefault<UGameFeelSettings>();
+	State->bShowRL = Settings && Settings->bEnableRLShowcase;
+	if (!State->bShowRL)
+	{
+		// Age the taunt out on toggle-off so it doesn't reappear at half-fade.
+		State->RL.TauntAgeSeconds = 999.0f;
+		return;
+	}
+
+	// Lazy-bind the insight delegate: we don't want to consume a slot on the
+	// explainability component's delegate list in shipping builds where the
+	// showcase is off. Bind on first tick where showcase is on.
+	if (!bInsightBound && BossExplain.IsValid())
+	{
+		BossExplain->OnBossInsightGenerated.AddUniqueDynamic(this, &UBossStatusHUDComponent::HandleBossInsight);
+		bInsightBound = true;
+	}
+
+	// Brain badge — persona + confidence come from the NNE component. When the
+	// bridge is driving the boss (training), the NNE component is dormant; the
+	// badge falls back to the sensible defaults (persona=None, confidence=0).
+	if (BossNNE.IsValid())
+	{
+		State->RL.Persona = BossNNE->GetSelectedArchetype();
+		State->RL.PersonaConfidence = BossNNE->GetSelectionConfidence();
+		State->RL.ChosenAction = BossNNE->GetLastChosenAction();
+	}
+	else
+	{
+		State->RL.Persona = NAME_None;
+		State->RL.PersonaConfidence = 0.0f;
+		State->RL.ChosenAction = -1;
+	}
+
+	// Action-mask row — always via GetLegalActionMask() so it stays honest
+	// during range/facing changes. The mask arriving from BossActionComponent is
+	// what the NNE argmax was gated against, so ChosenAction always sits on a
+	// legal cell (nothing to reconcile).
+	if (BossAction.IsValid())
+	{
+		State->RL.LegalMask = BossAction->GetLegalActionMask();
+		if (State->RL.ChosenAction < 0)
+		{
+			// NNE hasn't fired yet (bridge mode / model not ready) — read the
+			// committed action off BossActionComponent for a live indicator.
+			const int32 Committed = static_cast<int32>(BossAction->GetCurrentAction());
+			// EBossAction::Count means idle; only surface real actions.
+			State->RL.ChosenAction = (Committed >= 0 && Committed < State->RL.LegalMask.Num()) ? Committed : -1;
+		}
+	}
+	else
+	{
+		State->RL.LegalMask.Reset();
+		State->RL.ChosenAction = -1;
+	}
+
+	// Player profile radar — resolve the hero-side component lazily; the hero
+	// pawn can spawn a beat after the boss.
+	if (!HeroProfile.IsValid())
+	{
+		if (APawn* HeroPawn = UGameplayStatics::GetPlayerPawn(this, 0))
+		{
+			HeroProfile = HeroPawn->FindComponentByClass<UPlayerProfileComponent>();
+		}
+	}
+	if (HeroProfile.IsValid())
+	{
+		State->RL.PlayerProfile = HeroProfile->GetProfile().ToFloatArray();
+	}
+	else
+	{
+		State->RL.PlayerProfile.Reset();
+	}
+
+	// Age the taunt fade counter — the paint side turns age into an ease curve.
+	State->RL.TauntAgeSeconds += DeltaTime;
+}
+
+void UBossStatusHUDComponent::HandleBossInsight(const FBossInsight& Insight)
+{
+	if (!State.IsValid()) return;
+	State->RL.TauntText = Insight.TauntText;
+	State->RL.TauntAgeSeconds = 0.0f;
+	// TauntDurationSeconds keeps the 4s default; explainability can be extended
+	// later to author a per-insight duration if we need it.
 }
